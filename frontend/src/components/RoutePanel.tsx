@@ -59,7 +59,7 @@ export function RoutePanel({ result }: Props) {
             </div>
             <div>
               <div className="text-xs font-bold tracking-widest uppercase text-white/80">Recommended Route</div>
-              <div className="text-sm font-bold leading-none">Primary Dispatch — #{best_route.route_id.slice(0,8)}</div>
+              <div className="text-sm font-bold leading-none">Primary Dispatch — Route 1</div>
             </div>
           </div>
           <div className="text-right">
@@ -124,7 +124,7 @@ export function RoutePanel({ result }: Props) {
                   return (
                     <div key={r.route_id} className={`flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg border ${isBest ? 'bg-emerald-50 border-emerald-200 text-emerald-800 font-semibold' : 'bg-white border-slate-200 text-slate-600'}`}>
                       <span className={`w-6 h-6 rounded-full grid place-items-center text-[11px] font-bold ${isBest ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{i+1}</span>
-                      <span className="font-mono">#{r.route_id.slice(0,6)}</span>
+                      <span className="font-medium">Route {i+1}</span>
                       <span className="hidden sm:inline">• {r.total_distance_km.toFixed(1)}km</span>
                       <span className="ml-auto font-mono font-bold">{formatTime(r.total_duration_seconds)}</span>
                       <span className={`hidden sm:inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border ${r.feasibility==='compatible'?'bg-emerald-50 text-emerald-700 border-emerald-200': r.feasibility==='risky'?'bg-amber-50 text-amber-700 border-amber-200':'bg-red-50 text-red-700 border-red-200'}`}>
@@ -223,7 +223,7 @@ export function RoutePanel({ result }: Props) {
             <div className="space-y-1.5 mt-2">
               {explanation.rejected_routes.map((rej, i)=>(
                 <div key={i} className="text-xs bg-white border border-red-200 rounded-lg px-2.5 py-1.5">
-                  <div className="font-mono font-semibold text-red-700">#{rej.route_id.slice(0,8)} • {rej.feasibility || 'rejected'}</div>
+                  <div className="font-semibold text-red-700">Route {all_routes.length + i + 1} • {rej.feasibility || 'rejected'}</div>
                   <div className="text-red-900 leading-snug">{rej.reason}</div>
                 </div>
               ))}
@@ -253,7 +253,7 @@ export function RoutePanel({ result }: Props) {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-xs font-semibold text-slate-700">#{route.route_id.slice(0,8)}</span>
+                      <span className="text-xs font-semibold text-slate-900">Route {idx+2}</span>
                       <span className="text-xs text-slate-600">{route.total_distance_km.toFixed(1)} km • {formatTime(route.total_duration_seconds)}</span>
                       <span className={`inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border ${route.feasibility==='compatible'?'bg-emerald-50 text-emerald-700 border-emerald-200': route.feasibility==='risky'?'bg-amber-50 text-amber-700 border-amber-200':'bg-red-50 text-red-700 border-red-200'}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${route.feasibility==='compatible'?'bg-emerald-500':route.feasibility==='risky'?'bg-amber-500':'bg-red-500'}`}/>{route.feasibility}

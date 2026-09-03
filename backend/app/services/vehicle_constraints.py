@@ -23,61 +23,83 @@ class VehicleConstraints:
         hard_violations: List[str] = []
         warnings: List[str] = []
 
-        for idx, seg in enumerate(route.segments):
-            seg_label = f"Segment {idx+1}"
+        # Aggregate counters to avoid 42 duplicate warnings
+        narrow_segments = []
+        low_clearance_segments = []
+        poor_segments = []
+        heavy_segments = []
+        steep_segments = []
+        width_fail_segments = []
+        clearance_fail_segments = []
+        paved_fail_segments = []
 
+        for idx, seg in enumerate(route.segments):
+            seg_num = idx + 1
             # Hard: road width
             if seg.road_width_meters < vehicle.min_road_width_meters - 1e-6:
-                hard_violations.append(
-                    f"{seg_label}: Road width {seg.road_width_meters:.1f}m < required {vehicle.min_road_width_meters:.1f}m"
-                )
+                width_fail_segments.append(seg_num)
             elif seg.road_width_meters - vehicle.min_road_width_meters < 0.5:
-                # Tight but possible - risky
-                warnings.append(
-                    f"{seg_label}: Narrow road {seg.road_width_meters:.1f}m (margin {seg.road_width_meters - vehicle.min_road_width_meters:.1f}m) - risky for {vehicle.vehicle_class}"
-                )
+                narrow_segments.append(seg_num)
 
             # Hard: bridge clearance
             if seg.bridge_clearance_meters < vehicle.max_height_meters - 1e-6:
-                hard_violations.append(
-                    f"{seg_label}: Bridge clearance {seg.bridge_clearance_meters:.1f}m < vehicle height {vehicle.max_height_meters:.1f}m"
-                )
+                clearance_fail_segments.append(seg_num)
             elif seg.bridge_clearance_meters - vehicle.max_height_meters < 0.5:
-                warnings.append(
-                    f"{seg_label}: Low clearance {seg.bridge_clearance_meters:.1f}m (margin {seg.bridge_clearance_meters - vehicle.max_height_meters:.1f}m)"
-                )
+                low_clearance_segments.append(seg_num)
 
             # Hard: paved requirement
             if vehicle.requires_paved_road and seg.road_quality < 0.3:
-                hard_violations.append(
-                    f"{seg_label}: Unpaved / very poor road (quality {seg.road_quality:.2f}) not suitable for this vehicle"
-                )
+                paved_fail_segments.append(seg_num)
             elif seg.road_quality < 0.45:
-                # Incident-aware: cardiac allows poorer roads, spinal/maternity very strict
+                # Incident-aware thresholds and messaging
                 threshold = 0.45
-                if incident.category == EmergencyCategory.MEDICAL:
+                is_medical = incident.category == EmergencyCategory.MEDICAL
+                if is_medical:
                     if incident.medical_subtype == MedicalSubType.CARDIAC:
-                        threshold = 0.30  # cardiac allows rougher
+                        threshold = 0.30
                     elif incident.medical_subtype == MedicalSubType.SPINAL:
-                        threshold = 0.60  # spinal very strict
+                        threshold = 0.60
                     elif incident.medical_subtype == MedicalSubType.MATERNITY:
                         threshold = 0.55
+                else:
+                    # Police/Fire/Disaster: more lenient, and not patient comfort
+                    threshold = 0.32
                 if seg.road_quality < threshold:
-                    warnings.append(f"{seg_label}: Poor road quality {seg.road_quality:.2f} - patient comfort risk (threshold {threshold})")
+                    poor_segments.append(seg_num)
 
-            # Weight: soft warning unless weight data available (currently estimated, so never hard fail on weight)
-            # But if weight is explicitly very low quality and vehicle heavy, warn
             if vehicle.max_weight_tons >= 10 and seg.road_quality < 0.5:
-                warnings.append(f"{seg_label}: Heavy vehicle ({vehicle.max_weight_tons}t) on weak road - possible weight limit")
+                heavy_segments.append(seg_num)
 
-            # Grade: fire trucks / rescue vans need paved + moderate quality but can_handle_steep_grades flag
-            # If vehicle cannot handle steep grades and road_quality indicates grade issues (proxy), warn
             if not vehicle.can_handle_steep_grades and seg.road_quality < 0.4:
-                warnings.append(f"{seg_label}: Steep grade risk for vehicle that cannot handle steep grades")
+                steep_segments.append(seg_num)
 
-            # Restricted roads: currently proxied by is_highway flag
-            # Fire trucks penalized on highways? Actually should prefer non-highway for access - but treat as soft
-            # Police prefers highway - no hard fail
+        # Convert aggregated counters to single warnings/hard violations
+        if width_fail_segments:
+            hard_violations.append(f"Road width {route.segments[0].road_width_meters:.1f}m < required {vehicle.min_road_width_meters:.1f}m on {len(width_fail_segments)}/{len(route.segments)} segments")
+        elif narrow_segments:
+            # Show aggregated narrow warning
+            avg_margin = sum(route.segments[i-1].road_width_meters - vehicle.min_road_width_meters for i in narrow_segments) / len(narrow_segments)
+            warnings.append(f"Narrow road {route.segments[0].road_width_meters:.1f}m (margin {avg_margin:.1f}m) on {len(narrow_segments)}/{len(route.segments)} segments - risky for {vehicle.vehicle_class}")
+
+        if clearance_fail_segments:
+            hard_violations.append(f"Bridge clearance {route.segments[0].bridge_clearance_meters:.1f}m < vehicle height {vehicle.max_height_meters:.1f}m on {len(clearance_fail_segments)}/{len(route.segments)} segments")
+        elif low_clearance_segments:
+            warnings.append(f"Low clearance {route.segments[0].bridge_clearance_meters:.1f}m on {len(low_clearance_segments)}/{len(route.segments)} segments (margin <0.5m)")
+
+        if paved_fail_segments:
+            hard_violations.append(f"Unpaved / very poor road (quality {route.segments[0].road_quality:.2f}) on {len(paved_fail_segments)}/{len(route.segments)} segments - not suitable for this vehicle")
+        elif poor_segments:
+            avg_q = sum(route.segments[i-1].road_quality for i in poor_segments) / len(poor_segments)
+            if incident.category == EmergencyCategory.MEDICAL:
+                warnings.append(f"Poor road quality {avg_q:.2f} on {len(poor_segments)}/{len(route.segments)} segments - patient comfort risk")
+            else:
+                warnings.append(f"Poor road surface {avg_q:.2f} on {len(poor_segments)}/{len(route.segments)} segments - handling/reliability risk")
+
+        if heavy_segments:
+            warnings.append(f"Heavy vehicle ({vehicle.max_weight_tons}t) on weak road (quality {route.segments[0].road_quality:.2f}) on {len(heavy_segments)}/{len(route.segments)} segments - possible weight limit")
+
+        if steep_segments:
+            warnings.append(f"Steep grade risk on {len(steep_segments)}/{len(route.segments)} segments for vehicle that cannot handle steep grades")
 
         # Category-specific hard rules
         if vehicle.vehicle_class == VehicleClass.FIRE_TRUCK:
