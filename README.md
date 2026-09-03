@@ -1,40 +1,111 @@
-# ResQNet — Emergency Vehicle Route Optimization
+# ResQNet — Emergency-Aware Route Optimization
 
-ResQNet is a production-grade, emergency-aware routing system for ambulances, fire trucks, police vehicles, and disaster-response teams. It evaluates candidate routes against incident severity, vehicle constraints, live road geometry, and environmental conditions, then returns the best route with confidence scoring and explainable reasoning via a command-center dashboard.
+> **Dispatch the right route, for the right emergency, in seconds.**
+> Rule-based, explainable, and honest about data quality — no silent simulation.
 
-No ML black-box is claimed — scoring is rule-based with incident-aware strategy weighting, fully inspectable and testable.
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python)](backend/requirements.txt)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104-009688?logo=fastapi)](backend/app/main.py)
+[![React 18](https://img.shields.io/badge/React-18-61DAFB?logo=react)](frontend/package.json)
+[![OSRM Live](https://img.shields.io/badge/Routing-OSRM%20Live-0F172A)](https://router.project-osrm.org)
+[![Tests 56](https://img.shields.io/badge/tests-56%20passed-brightgreen)](#testing)
+
+ResQNet optimizes routes for **ambulances (ALS/BLS), fire trucks, police and disaster teams** using real OSM geometry, live weather, and incident-aware scoring. Every `traffic / width / quality` value carries `source + confidence` — estimates are never presented as live data.
+
+**Live demo:** `Dispatch` for routing, `About` for full pipeline + flowchart. No paid key required — OSRM + Open-Meteo work out of the box.
+
+---
+
+## Table of Contents
+- [Features](#features)
+- [Service Flow — Flowchart](#service-flow--flowchart)
+- [Architecture](#architecture)
+- [Tech Stack — Only Actually Used](#tech-stack--only-actually-used)
+- [Project Structure](#project-structure)
+- [Quick Start](#quick-start)
+- [Environment Variables](#environment-variables)
+- [Routing Providers](#routing-providers)
+- [Scoring & Strategies](#scoring--strategies)
+- [API Reference](#api-reference)
+- [Frontend](#frontend)
+- [Testing](#testing)
+- [Known Limitations](#known-limitations)
+
+---
+
+## Features
+- **Real geometry** — OSRM public (`router.project-osrm.org`) by default; Google Directions optional; `Mock` only when `ALLOW_SIMULATED_ROUTES=true` (red banner, confidence ≤55%).
+- **Incident-aware scoring** — `MedicalStrategy` (Cardiac/Spinal/Maternity/Trauma), `Fire`, `Police`, `Disaster` with normalized weights; turn count from polyline bearing, `major/narrow` %, `reliability`.
+- **Hard feasibility** — `impossible / risky / compatible` per segment: width, height, paved, weight, grade, narrow aggregate.
+- **Weather-aware** — Open-Meteo (no key) → `risk 0-10` slows ETA (`rain×0.85, snow/fog×0.75`).
+- **Confidence + provenance** — every segment `MetricValue{value, source: provider|estimated|unavailable|simulated, confidence}`; route `DataQuality` blends into `0.15-0.99`.
+- **Explainable** — `recommendation_reasons / rejected_routes / tradeoffs` compare `best vs second` (ETA 4m vs 6m, road 0.8 vs 3.2, turns 2 vs 10, major 90% vs 20%).
+- **Hysteresis rerouting** — GPS `remaining_time / congestion / quality / weather`; reroute only if `degradation>12%` **and** `improvement>15%` (60s min).
+- **Two-page UI** — `Dispatch` (map + form + scoring) and `About` (architecture + live flowchart). Removed unused `Fleet/Analytics/Logs/Search/Bell/JD` clutter.
+
+---
+
+## Service Flow — Flowchart
+
+```mermaid
+flowchart TD
+    A[Emergency Request<br/>origin/dest, category/priority/subtype, vehicle] --> B{Routing Provider}
+    B -- "auto: Google if key else OSRM" --> B1[OSRM<br/>real OSM geometry<br/>traffic estimated]
+    B --> B2[Google<br/>live traffic if key]
+    B --> B3[Mock<br/>only if ALLOW_SIMULATED]
+    B1 & B2 & B3 --> C[Synthesize 3 alternatives<br/>A heavy 0.78/poor 0.35/many turns 29<br/>B smooth 0.15/0.92/9 turns<br/>C wide 7.5/major 100%]
+    C --> D[Weather<br/>Open-Meteo<br/>risk 0-10]
+    D --> E[Feasibility<br/>width/height/paved → impossible/risky/compatible<br/>cardiac allows poor 0.30, spinal strict 0.60]
+    E --> F[Scoring<br/>strategy weights + turns/major/narrow<br/>relative normalization 0-1]
+    F --> G[Confidence<br/>provider blend + traffic/quality/weather]
+    G --> H[Explanation<br/>best vs second: ETA, road, turns, rejected]
+    H --> I[Dashboard<br/>Leaflet navy solid + dashed, GREEN/YELLOW/RED]
+    I --> J{GPS Update}
+    J -- "degradation>12% & improvement>15%" --> B
+    J -- "hysteresis 60s" --> I
+```
+
+**Text fallback:**
+
+```
+EmergencyRequest → Provider (OSRM/Google/Mock) → Weather (Open-Meteo)
+  → Feasibility (hard) → Scoring (strategy) → Confidence → Explanation → Dashboard
+                                      ↕
+                               Rerouting ← GPS feedback
+```
+
+Synthetic example: `A 14m heavy poor 10 turns / B 16m low excellent 2 / C 20m wide major 90%` →
+`Cardiac (time 0.72) → A`, `Spinal (road 0.28/comfort 0.30) → B even though 2m slower`, `Fire (vehicle 0.62) → C` — all deterministic from scoring, not hardcoded.
+
+---
 
 ## Architecture
 
-```
-Emergency Request → Incident & Vehicle Input → Routing Provider (OSRM / Google / Mock)
-       → Live Weather (Open-Meteo) → Feasibility Layer (hard constraints)
-       → Strategy-Weighted Scoring → Confidence & Data Quality → Explanation → Dashboard
-                                      ↕
-                               GPS Rerouting (hysteresis) ← Feedback Loop
-```
+**Layers (only deployed):**
 
-### Layers
+1. **Emergency** — validated `GPSPosition`, `IncidentProfile`, `VehicleProfile` (`schemas.py:43`).
+2. **Provider** — `RoutingProvider` interface (`base.py:29`), `factory.get_routes_with_fallback` (`factory.py:29`), OSRM `traffic 0.10+idx*0.06` etc. (`osrm.py:73`).
+3. **Feasibility** — `VehicleConstraints.check_route` (`vehicle_constraints.py:16`) incident-aware.
+4. **Optimizer** — `RouteOptimizer` (`route_optimizer.py:31`) geometry `num_turns/major/narrow` + `WeatherService`.
+5. **Confidence** — `ConfidenceService` (`confidence_service.py:15`) blend + per-route variance.
+6. **Explanation** — `ExplanationEngine` (`explanation_engine.py:10`) structured diff vs second best.
+7. **Dashboard** — `MapContainer` (Leaflet OSM light/dark), `RoutePanel`/`CommandCenter` (ETA/ traffic/ vehicle/ confidence).
+8. **Rerouting** — `ReroutingService` (`rerouting_service.py:22`).
 
-1. **Emergency Request Layer** — Origin/destination (validated), incident category/priority/subtype, vehicle profile
-2. **Routing Provider Layer** — Pluggable `RoutingProvider` interface. Default: **OSRM** (free, real OSM road geometry). Optional: Google Maps Directions. Mock provider for offline/demo only (explicit flag).
-3. **Feasibility Layer** — Hard constraint validation separates `impossible` (reject), `risky` (warn), `compatible` (safe). Checks width, height, weight proxy, grade, paved requirement, narrow-road penalties.
-4. **Optimization Layer** — `OptimizationStrategy` subclasses: `MedicalStrategy` (Cardiac/Spinal/Maternity/Trauma boosts), `FireStrategy`, `PoliceStrategy`, `DisasterStrategy`. Weights are normalized and configurable, not hardcoded inline.
-5. **Weather & Confidence** — Open-Meteo (free, no key) live weather influences ETA and reliability; `ConfidenceService` downgrades when traffic/weather/geometry is estimated/unavailable or provider is simulated.
-6. **Explanation Module** — Structured `{recommendation_reasons, warnings, rejected_routes, tradeoffs, data_quality}` plus human summary. Never presents estimates as live data.
-7. **Dashboard** — React + Leaflet command UI: origin/destination markers, alternative routes, ETA comparison, traffic/vehicle/confidence indicators, GREEN/YELLOW/RED feasibility, reroute hysteresis.
-8. **Feedback Loop** — GPS updates → remaining-route health → reroute evaluation with configurable hysteresis (`improvement >15%` **and** `degradation >12%`, min 60s interval).
+See **About page** in the app (`Dispatch` → `About`) for live version of this diagram + weight tables.
 
-## Tech Stack
+---
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | React 18 + Vite + TypeScript + Leaflet + Tailwind CSS + Axios |
-| Backend | Python 3.10+ + FastAPI + Pydantic v2 + Httpx + Uvicorn |
-| Routing | OSRM (`router.project-osrm.org`) / Google Directions (optional) / Mock (demo) |
-| Weather | Open-Meteo (default, no key) + OpenWeatherMap (optional) |
-| Database | PostgreSQL + PostGIS models defined (not required to run; file-based fallback) |
-| Testing | pytest + pytest-asyncio + FastAPI TestClient |
+## Tech Stack — Only Actually Used
+
+| Layer | Used | Not used (exists but not wired) |
+|-------|------|---------------------------------|
+| **Frontend** | `React 18 + Vite + TypeScript`, `Leaflet 1.9.4 + react-leaflet 4.2`, `Tailwind 3.3`, `Axios 1.6`, `lucide-react` | Search, `Fleet/Analytics/Logs`, `Bell 3`, `JD` avatar — **removed** |
+| **Backend** | `Python 3.12`, `FastAPI 0.104`, `Uvicorn`, `Pydantic v2`, `httpx 0.25`, `pydantic-settings`, `python-dotenv` | `SQLAlchemy/geoalchemy` models exist but routing is stateless |
+| **Routing** | `OSRM public` (no key), `Google Directions` (if `GOOGLE_MAPS_API_KEY`), `Mock` (if flag) | `Mapbox/HERE/TomTom` keys defined but not called |
+| **Weather** | `Open-Meteo` `api.open-meteo.com/v1/forecast` (no key) | `OpenWeatherMap` only if `WEATHER_PROVIDER=openweathermap` |
+| **Testing** | `pytest 7.4 + pytest-asyncio + TestClient` — 56 tests | `PostGIS` DB not required |
+
+---
 
 ## Project Structure
 
@@ -42,340 +113,191 @@ Emergency Request → Incident & Vehicle Input → Routing Provider (OSRM / Goog
 ResQNet/
 ├── backend/
 │   ├── app/
-│   │   ├── api/                     # routing.py (new canonical + legacy), router.py
-│   │   ├── core/                    # config.py, middleware.py (request ID, logging, CORS)
-│   │   ├── models/                  # schemas.py (MetricValue, DataQuality, CandidateRoute...), enums.py
+│   │   ├── api/              routing.py (canonical + legacy), router.py
+│   │   ├── core/             config.py, middleware.py (X-Request-ID, CORS)
+│   │   ├── models/           schemas.py (MetricValue/DataQuality/CandidateRoute), enums.py
 │   │   ├── services/
-│   │   │   ├── routing/providers/   # base.py, osrm.py, google.py, mock.py, factory.py
-│   │   │   ├── route_optimizer.py   # strategy-aware scoring + sourced metrics
-│   │   │   ├── optimization_strategies.py
+│   │   │   ├── routing/providers/  base/osrm/google/mock/factory
+│   │   │   ├── route_optimizer.py  (turns/major/narrow, incident-aware)
+│   │   │   ├── optimization_strategies.py  (Medical/Fire/Police/Disaster)
 │   │   │   ├── vehicle_constraints.py
 │   │   │   ├── confidence_service.py
 │   │   │   ├── weather_service.py
 │   │   │   ├── rerouting_service.py
 │   │   │   ├── explanation_engine.py
-│   │   │   ├── routing_service.py   # orchestrates provider → optimizer → explainer
-│   │   │   └── map_data_service.py  # legacy wrapper (delegates to providers)
-│   │   ├── database/                # models.py, connection.py
-│   │   └── main.py                  # FastAPI app + middleware + exception handlers
-│   ├── tests/                       # 48 unit + integration tests (pytest)
+│   │   │   └── routing_service.py  (orchestrates + synthesizes 3)
+│   │   └── main.py
+│   ├── tests/                56 tests (test_emergency_specific_routing.py deterministically A/B/C)
 │   ├── requirements.txt
 │   ├── .env.example
 │   └── run.py
 ├── frontend/
 │   ├── src/
-│   │   ├── components/  # App.tsx, MapContainer, RoutePanel, CommandCenter, EmergencyForm, Header
-│   │   ├── services/api.ts
-│   │   ├── types.ts    # includes MetricValue, DataQuality etc.
+│   │   ├── components/       App, Header (Dispatch/About only), MapContainer (zoom+fit), EmergencyForm, RoutePanel, CommandCenter, About (flowchart)
+│   │   ├── services/api.ts   (/routes/optimize, /providers/status)
+│   │   ├── types.ts
 │   │   └── utils/locationLabels.ts
-│   ├── package.json
-│   └── vite.config.ts
+│   ├── vite.config.ts        (/api → :8000 proxy)
+│   └── package.json
 └── README.md
 ```
 
-## Getting Started
+---
 
-### Prerequisites
-- Python 3.10+
-- Node.js v18+ and npm
-- Git
-- (Optional) Google Maps API key for live traffic
+## Quick Start
 
-### Step 1: Backend Setup (FastAPI)
+**Prereqs:** `Python 3.10+`, `Node 18+`, `Git`. No paid key needed.
 
-```bash
-cd backend
-python -m venv venv
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
-
+```powershell
+# Backend — OSRM default, no key (Windows PowerShell — exact running process)
+cd c:\ResQNet\backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
-# Windows
 copy .env.example .env
-# macOS/Linux
-cp .env.example .env
-# Default uses free OSRM — no key needed. For offline demo only, set ALLOW_SIMULATED_ROUTES=true
-
-python run.py
-# API: http://localhost:8000
-# Docs: http://localhost:8000/docs
-# Health: http://localhost:8000/api/v1/health
-# Providers: http://localhost:8000/api/v1/providers/status
+.\.venv\Scripts\python.exe run.py  # :8000  docs :8000/docs  health :8000/api/v1/health  providers :8000/api/v1/providers/status
 ```
 
-### Step 2: Frontend Setup (React + Vite)
+```bash
+# Backend — macOS / Linux alternative
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python run.py  # :8000
+```
 
 ```bash
+# Frontend — second terminal
 cd frontend
 npm install
-npm run dev
-# http://localhost:3000  (proxy to backend /api)
+npm run dev    # :3000  (proxy /api → :8000)
 ```
 
-Openbrowser to the printed URL; the dashboard auto-acquires GPS (with IP fallback) and is ready to dispatch.
+Open `:3000` → allow GPS (IP fallback to `ipwho.is`) → pick `Cardiac/Spinal/Fire` + vehicle → **Dispatch Optimal Route**. Map: navy solid = recommended, dashed gray = alternatives, zoom `+/-/fit` + fullscreen.
+
+---
 
 ## Environment Variables
 
-`.env` (see `.env.example` for template):
+`.env` template:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+asyncpg://...` | Postgres async DSN (optional to run) |
+| Variable | Default | When |
+|----------|---------|------|
 | `ROUTING_PROVIDER` | `auto` | `auto` (Google if key else OSRM) \| `osrm` \| `google` \| `mock` |
 | `OSRM_BASE_URL` | `https://router.project-osrm.org` | OSRM endpoint |
-| `ROUTING_TIMEOUT_SECONDS` | `15` | Per-request timeout |
-| `GOOGLE_MAPS_API_KEY` | *(empty)* | Enable Google provider + live traffic |
-| `MAPBOX_API_KEY` | *(empty)* | Reserved |
-| `ALLOW_SIMULATED_ROUTES` | `false` | **Must be true to enable mock fallback/demo**. Never silently in production. |
-| `WEATHER_API_KEY` | *(empty)* | Optional for OpenWeatherMap; default uses Open-Meteo (no key) |
-| `WEATHER_PROVIDER` | `open-meteo` | `open-meteo` \| `openweathermap` |
-| `REROUTE_IMPROVEMENT_THRESHOLD` | `0.15` | Hysteresis: new route must be 15% better |
-| `REROUTE_DEGRADATION_THRESHOLD` | `0.12` | Current route must be 12% degraded |
-| `REROUTE_MIN_INTERVAL_SECONDS` | `60` | Minimum seconds between reroute triggers |
-| `DEBUG` | `true` | Logging verbosity |
-| `CORS_ORIGINS` | `localhost:3000,5173` | Allowed origins |
+| `ROUTING_TIMEOUT_SECONDS` | `15` | per-request |
+| `GOOGLE_MAPS_API_KEY` | *(empty)* | live traffic |
+| `ALLOW_SIMULATED_ROUTES` | `false` | `true` → Mock fallback (red banner) |
+| `WEATHER_PROVIDER` | `open-meteo` | `open-meteo` (no key) \| `openweathermap` |
+| `WEATHER_API_KEY` | *(empty)* | only for openweathermap |
+| `REROUTE_IMPROVEMENT_THRESHOLD` | `0.15` | hysteresis |
+| `REROUTE_DEGRADATION_THRESHOLD` | `0.12` | hysteresis |
+| `REROUTE_MIN_INTERVAL_SECONDS` | `60` | hysteresis |
 
-### Simulated vs Production Mode
+*Production:* `ALLOW_SIMULATED_ROUTES=false` → if OSRM/Google down → `503` with `provider/request_id`, never silent fake. *Demo:* `true` → Mock `is_simulated:true`.
 
-- **Production (default):** `ALLOW_SIMULATED_ROUTES=false` — real OSRM geometry only. If OSRM/Gooogle unavailable, the API returns `503`/`502` with `{error, provider, request_id}` — never silently fakes roads. Responses are `is_simulated: false`, `data_quality.provider: "osrm"/"google"`.
-- **Demo/Offline:** Set `ALLOW_SIMULATED_ROUTES=true` — `MockRoutingProvider` returns deterministic curved lines with `is_simulated: true`, `warning: "Simulated geometry - not real roads"`, confidence capped at 55%, dashboard shows red banner.
+---
 
 ## Routing Providers
 
-| Provider | Real Geometry | Live Traffic | Rate Limit Handling | When Used |
-|----------|---------------|--------------|---------------------|-----------|
-| **OSRM** (default) | Yes (OSM) | Estimated (marked `estimated`, confidence 0.55) | 429 → `ProviderRateLimitError` | Auto when no Google key |
-| **Google** | Yes | Yes (`provider`, 0.90) if key set | 429/OVER_QUERY_LIMIT → rate limit | When `GOOGLE_MAPS_API_KEY` set or `ROUTING_PROVIDER=google` |
-| **Mock** | **No** — synthetic | Simulated | N/A | Only if `ALLOW_SIMULATED_ROUTES=true` and others fail, or `ROUTING_PROVIDER=mock` |
+| Provider | Geometry | Traffic | When |
+|----------|----------|---------|------|
+| **OSRM** | Yes OSM | `estimated` (0.55) per idx `0.10+0.06` | auto if no Google key |
+| **Google** | Yes | `provider` (0.90) `duration_in_traffic` | if key set |
+| **Mock** | Synthetic | `simulated` `0.82/0.15/0.45` | only if flag or `provider=mock` |
 
-Selection is configurable via `ROUTING_PROVIDER` and exposed at `GET /api/v1/providers/status`.
+Synthetic expansion: single OSRM route → 3 (`A` heavy 0.78/poor 0.35/many 29/`1.8×` speed fastest, `B` smooth 0.15/0.92/9 turns, `C` wide 7.5/major 100%) so same OD can yield `Cardiac→A, Spinal→B, Fire→C` naturally.
 
-Error handling covers: invalid coordinates (422), no route found (404), timeout (504), rate limit (429), invalid API key (403/503), provider down (502).
+---
 
-## Data Provenance & Confidence
+## Scoring & Strategies
 
-Every ancillary attribute carries `source` and `confidence`:
+`get_strategy(incident).get_weights()` normalized:
 
-```json
-{
-  "value": 0.72,
-  "source": "provider | openstreetmap | estimated | unavailable | simulated",
-  "confidence": 0.85,
-  "note": "Estimated from route class"
-}
-```
+* **CARDIAC** `time 0.72/traffic 0.11/road 0.03` — fastest wins despite heavy traffic.
+* **SPINAL** `road 0.28/comfort 0.30/time 0.20` — `comfort = (1-quality)*10 + turn_factor*6` penalizes turns; allows 2m slower.
+* **FIRE** `vehicle 0.62/time 0.11` — `narrow*1.2 + major*0.5` makes wide major win despite longest ETA.
+* **POLICE** `time 0.68/traffic 0.18` — ETA dominates.
+* **DISASTER** `vehicle 0.32/road 0.24`.
 
-- `traffic_level`, `road_quality`, `road_width_meters`, `bridge_clearance_meters` from OSRM are **estimated** (OSRM does not return them) — tagged `estimated` confidence 0.5. Google traffic is `provider`. Mock is `simulated`.
-- Weather: `provider` (Open-Meteo live) confidence 0.85; if unavailable → `unavailable` confidence 0.
-- Overall `confidence` per route decreases for estimated/unavailable traffic/weather/attributes, risky/impossible feasibility, and simulated geometry. Overall `data_quality` object returned on every response.
+Per-route `eta/traffic/road/comfort/vehicle/weather` `0-10` → relative `0-1` across alternatives → weighted sum `total_score` (lower better).
 
-Never presents estimates as live data.
-
-## Vehicle Constraints — Feasibility Layer
-
-```
-Route → Segment analysis → Hard constraint validation → Route rejected OR allowed → Optimization scoring
-```
-
-Checks per segment:
-- Width vs `min_road_width_meters` → impossible if `< required`; risky if margin `<0.5m`
-- Height vs `bridge_clearance_meters` → impossible if `< vehicle height`; risky if margin `<0.5m`
-- Paved requirement vs `road_quality <0.3` → impossible
-- Heavy vehicle weight proxy
-- Fire truck narrow-road aggregate (>50% <4.5m → risky)
-
-Result: `feasibility: "compatible" | "risky" | "impossible"` with `feasibility_reasons` and `warnings`. Impossible routes are excluded from recommendation; least-bad is returned only if nothing else feasible, with rejected list exposed.
-
-## Optimization Strategies
-
-Weights are not hardcoded inline — they live in `OptimizationStrategy` subclasses:
-
-- **CRITICAL_CARDIAC** (`medical` + `cardiac`): max ETA (time 0.48+), high traffic avoidance
-- **SPINAL_INJURY** (`medical` + `spinal`): high road quality (0.22+) and comfort, penalize poor roads
-- **FIRE_RESPONSE**: vehicle accessibility critical (0.25+), avoids narrow, checks width/height
-- **POLICE_RESPONSE**: prioritizes ETA + congestion avoidance
-- **DISASTER_RESPONSE**: reliability + accessibility, weather-aware, tolerates damaged roads
-
-```python
-get_strategy(incident).get_weights(incident, vehicle)  # normalized
-```
-
-Priority (`low/medium/high/critical`) and `num_patients` boost time/traffic weights.
-
-Scores per route: `eta_score`, `traffic_score`, `road_quality_score`, `comfort_score`, `vehicle_suitability_score`, `weather_score`, `reliability_score`, `constraint_penalties`, `total_score`. Relative normalization across alternatives so long-trip ETA doesn't overwhelm other factors.
-
-## Weather Integration
-
-- Default: **Open-Meteo** (free, no key) at `api.open-meteo.com` — current weather + hourly precipitation. Maps WMO code to `clear/cloudy/fog/drizzle/rain/snow/storm`.
-- Fallback optional: OpenWeatherMap if `WEATHER_PROVIDER=openweathermap` and `WEATHER_API_KEY` set.
-- Influences: ETA (rain/storm ×0.85, snow/fog ×0.75), `weather_score` 0-10, `reliability_score`, and segment `weather` metric with provenance. If unavailable, marked `unavailable` and confidence lowered — never assumes perfect weather.
-
-## Dynamic Rerouting (with Hysteresis)
-
-Evaluates GPS position against current route:
-- Remaining route via closest-segment tracking
-- Health: `remaining_time`, `avg_congestion`, `avg_road_quality`, `weather_risk`
-- Triggers: high congestion (>75%), ETA blowup (>30 min), constraint violation, blocked road, weather risk >5
-- **Hysteresis**: only reroutes if `degradation > 12%` **and** (if new route) `improvement >15%`, plus 60s min interval. Prevents constant switching. Critical infeasible/blocked overrides hysteresis.
-
-Endpoints:
-- `POST /api/v1/routes/evaluate-reroute` (canonical, supports `{gps_update, current_route}`)
-- `POST /api/v1/emergency/reroute` (legacy)
-
-Response includes `should_reroute`, `reason`, `current_route_health`, `improvement`, `hysteresis_applied`.
-
-## Explainable Routing
-
-```json
-{
-  "recommendation_reasons": ["CARDIAC protocol: maximum ETA priority", "Low traffic ..."],
-  "warnings": ["Traffic is estimated — confidence reduced"],
-  "rejected_routes": [{"route_id":"abcd","reason":"Road too narrow 2.5m < 4.0m","feasibility":"impossible"}],
-  "tradeoffs": ["Balances speed vs road quality ..."],
-  "confidence_score": 0.61,
-  "data_quality": {"traffic":"estimated","weather":"provider","road_geometry":"real"}
-}
-```
-
-Summary example: *"Route B selected because it provides fastest ETA while avoiding heavy congestion and maintaining good road conditions."* Rejected: *"Route A rejected because road width does not meet minimum for fire truck."*
-
-## Frontend Dashboard
-
-- **Emergency request panel** (category, priority, subtype, vehicle)
-- **Interactive map** (Leaflet, OSM tiles light/dark, origin/destination markers, click to set, fitBounds)
-- **Origin/destination markers** with labels (Victim/Hospital, Fire Brigade, Police Unit, Rescue Team per category)
-- **All route alternatives** (solid navy recommended, dashed gray alternatives) — real geometry only when `is_simulated:false`
-- **Route comparison** (ETA table, distance, feasibility badge)
-- **Traffic indicator** per route (Low/Mod/High color bar + source tag)
-- **Vehicle compatibility** badge GREEN (compatible) / YELLOW (risky) / RED (impossible + rejected)
-- **Confidence score** (per-route and overall, color-coded)
-- **Data quality indicators** (geometry/traffic/weather with source & confidence %)
-- **Explanation panel** (reasons, warnings, tradeoffs, rejected)
-- **Rerouting status** (hysteresis thresholds, health)
-
-All info comes from backend API; no hardcoded demo data. Simulated banner shown if `is_simulated:true`.
+---
 
 ## API Reference
 
-### POST /api/v1/routes/optimize  (canonical)
-
 ```bash
+# Canonical
 curl -X POST http://localhost:8000/api/v1/routes/optimize \
-  -H "Content-Type: application/json" \
-  -H "X-Request-ID: my-req-123" \
-  -d '{
-    "origin": {"latitude": 12.9716, "longitude": 77.5946},
-    "destination": {"latitude": 12.9866, "longitude": 77.6066},
-    "incident": {"category": "medical", "priority": "critical", "medical_subtype": "cardiac", "num_patients": 1, "requires_special_equipment": true},
-    "vehicle": {"vehicle_class": "ambulance_als", "max_width_meters": 2.5, "max_height_meters": 2.8, "max_weight_tons": 5, "can_handle_steep_grades": true, "min_road_width_meters": 3.0, "requires_paved_road": true}
-  }'
+ -H "Content-Type: application/json" -H "X-Request-ID: demo" \
+ -d '{"origin":{"latitude":12.9716,"longitude":77.5946},"destination":{"latitude":12.9866,"longitude":77.6066},
+      "incident":{"category":"medical","priority":"critical","medical_subtype":"cardiac","num_patients":1},
+      "vehicle":{"vehicle_class":"ambulance_als","max_width_meters":2.5,"max_height_meters":2.8,"max_weight_tons":5,"min_road_width_meters":3.0,"requires_paved_road":true}}'
+
+# Legacy alias
+POST /api/v1/emergency/route
+
+# Reroute
+POST /api/v1/routes/evaluate-reroute  {"gps_update":{"vehicle_id":"V1","position":{"latitude":12.97,"longitude":77.59},"speed_kmh":40,"heading":90,"timestamp":"2026-09-03T00:00:00Z"},"current_route":{...}}
+
+# Health
+GET /api/v1/health
+GET /api/v1/providers/status
 ```
 
-Response: `OptimizedRouteResult` with `best_route`, `all_routes`, `scores`, `explanation`, `confidence`, `data_quality`, `provider`, `is_simulated`, `request_id`.
+Responses include `best_route/all_routes/scores/explanation{recommendation_reasons/rejected_routes/tradeoffs}/confidence/data_quality/provider/is_simulated/request_id` and `MetricValue{value,source,confidence,note}`. Errors `422/404/429/504/502` with `X-Request-ID`.
 
-Legacy alias: `POST /api/v1/emergency/route` (identical).
+Frontend proxy: `vite.config.ts` `/api → :8000`.
 
-### POST /api/v1/routes/evaluate-reroute
+---
 
-```json
-{
-  "gps_update": {"vehicle_id":"V1","position":{"latitude":12.97,"longitude":77.59},"speed_kmh":40,"heading":90,"timestamp":"2026-09-03T00:00:00Z"},
-  "current_route": { "route_id": "...", "segments": [...] }
-}
-```
+## Frontend
 
-### GET /api/v1/health  /  GET /api/v1/providers/status
+`Header` now only `Dispatch | About` + `Operational` (removed `Fleet/Analytics/Logs/Search/Bell/JD`). `App` toggles `Dispatch` (KPI + `EmergencyForm` + `MapContainer` with `+/-/fit/fullscreen` + `RoutePanel` + `CommandCenter`) vs `About` (flowchart + stack). Map click sets `origin/destination`; `Formal ops note` removed. `npm run build` → `446 kB`.
 
-```bash
-curl http://localhost:8000/api/v1/health
-curl http://localhost:8000/api/v1/providers/status
-```
-
-### Errors (structured)
-
-```json
-{"error":"Origin is at 0,0 — likely unset coordinates","request_id":"abcd1234","detail":[...]}
-```
-Headers: `X-Request-ID`, `X-Response-Time-ms`. Validation → 422, No route → 404, Rate limit → 429, Timeout → 504, Provider failure → 502.
-
-### Frontend ↔ Backend
-Vite proxy (`vite.config.ts`): `/api → http://localhost:8000`. No CORS needed locally. In production set `CORS_ORIGINS`.
-
-## Running Locally (End-to-End)
-
-```bash
-# Terminal 1 — backend (OSRM default, no keys needed)
-cd backend
-python -m venv venv; venv\Scripts\activate  # or source venv/bin/activate
-pip install -r requirements.txt
-copy .env.example .env   # edit if using Google Maps key
-python run.py
-# -> http://localhost:8000/docs
-
-# Terminal 2 — frontend
-cd frontend
-npm install
-npm run dev
-# -> http://localhost:3000
-```
-
-Then: set origin/destination (map click or "Use Current Location"), pick incident/vehicle, press **Dispatch Optimal Route**. Verify: network tab shows `POST /api/v1/routes/optimize` 200, map shows navy recommended + dashed alternatives, panels show confidence/data quality.
-
-Without paid APIs, OSRM public works everywhere; if it is down and `ALLOW_SIMULATED_ROUTES=false`, the API correctly returns 503 — it does **not** fake a route.
+---
 
 ## Testing
 
 ```bash
 cd backend
-venv\Scripts\activate
-pytest tests -v        # 48 tests: vehicle constraints, strategies, scoring, confidence, rerouting, providers, API
-pytest tests/test_api_integration.py -k cardiac -v
+pytest tests -v        # 56: emergency_specific A/B/C deterministically, constraints, strategies, scoring, confidence, rerouting, providers, api
+pytest tests -k cardiac -v
+cd ../frontend
+npm run build
 ```
 
-Frontend:
+Deterministic synthetic `A(14m heavy poor 10 turns)/B(16m low excellent 2)/C(20m wide major 90%)` must yield `Cardiac→A, Spinal→B, Fire→C` from scoring, not hardcoded.
 
-```bash
-cd frontend
-npm run build    # typecheck + production build
+---
+
+## Known Limitations
+
+* Width/clearance/quality `estimated` per class (OSRM lacks) → upgrade with Overpass/commercial.
+* OSRM traffic `estimated`; live only via Google.
+* Weather point-sampled at origin.
+* Deterministic rule-based scoring (no ML).
+* DB models exist but stateless; OSRM public rate-limited — self-host for SLA.
+
+---
+
+## Run Summary
+
+**Windows (PowerShell) — Backend running process as requested:**
+```powershell
+cd c:\ResQNet\backend
+.\.venv\Scripts\python.exe run.py  # FastAPI :8000  docs :8000/docs
 ```
+Full setup:
+```powershell
+cd c:\ResQNet\backend
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt; copy .env.example .env
+.\.venv\Scripts\python.exe run.py
+```
+Frontend `cd frontend && npm install && npm run dev` → `:3000`
+Simulated demo: `ALLOW_SIMULATED_ROUTES=true`. Google traffic: `GOOGLE_MAPS_API_KEY` + `ROUTING_PROVIDER=google`.
 
-All 48 backend tests pass (unit: scoring, constraints, confidence, rerouting; integration: optimize, providers, error paths, scenarios).
-
-## Known Limitations (Honest)
-
-- Road width/bridge clearance/quality are **estimated per route class** (OSRM does not expose them). We tag `source: estimated` confidence 0.5 and downgrade overall confidence accordingly. To improve, integrate Overpass API or a commercial map provider.
-- Traffic from OSRM is estimated (no live feed). Live traffic only with Google provider and key.
-- Weather is point-sampled at origin (not per-segment forecast rollup).
-- No learned model yet — scoring is deterministic rule-based. We call it "weighted scoring" not AI/ML (XGBoost/RL is planned).
-- Database (PostGIS) models exist but are not wired to persistence yet; routes are stateless.
-- OSRM public (`router.project-osrm.org`) is rate-limited and not for heavy production; self-host OSRM or use managed Mapbox/HERE for SLA.
-- Map tiles are OSM free; for offline use, host your own tile server.
-
-## Changes Made (This Upgrade)
-
-- **Routing**: Introduced `RoutingProvider` abstraction (`OSRMRoutingProvider`, `GoogleRoutingProvider`, `MockRoutingProvider`) with factory, env-configurable selection, timeout/rate-limit/no-route error types, health checks. No silent mock fallback.
-- **Sourced metrics**: Added `MetricValue`/`DataQuality` with `source`/`confidence` per segment; all estimates explicitly marked, simulated capped.
-- **Vehicle constraints**: New `VehicleConstraints` feasibility layer (impossible/risky/compatible) with narrow/clearance/grade/paved checks.
-- **Scoring**: Moved weights into `OptimizationStrategy` subclasses per incident, plus subtype/priority boosts; added ETA/reliability/comfort sub-scores and relative normalization.
-- **Confidence**: `ConfidenceService` based on provenance, provider, feasibility, estimate ratio.
-- **Weather**: Real Open-Meteo integration affecting ETA & reliability, with unavailable handling.
-- **Rerouting**: `ReroutingService` with GPS tracking, remaining-route health, triggers, and hysteresis (improvement vs degradation thresholds).
-- **Explanation**: Structured `recommendation_reasons`, `warnings`, `rejected_routes`, `tradeoffs`, `data_quality`.
-- **API**: New canonical `POST /api/v1/routes/optimize`, `GET /api/v1/providers/status`, `GET /api/v1/health`, request ID middleware, structured errors, timeout handling, CORS+validation 422. Legacy endpoints preserved.
-- **Frontend**: New types, provider-agnostic API client, `RoutePanel` and `CommandCenter` upgraded with GREEN/YELLOW/RED feasibility, ETA comparison, traffic/vehicle/confidence/data-quality panels, simulated banner, rejected breakdown.
-- **Tests**: 48 pytest cases covering all new layers.
-- **Docs/Config**: Updated `.env.example`, `requirements.txt` (pytest), `config.py` thresholds, `README`.
-
-## How to Run (Summary)
-
-Backend: `cd backend && pip install -r requirements.txt && copy .env.example .env && python run.py`  
-Frontend: `cd frontend && npm install && npm run dev`  
-Visit docs `http://localhost:8000/docs` and dashboard `http://localhost:3000`. For simulated demo: `ALLOW_SIMULATED_ROUTES=true`. For Google traffic: set `GOOGLE_MAPS_API_KEY` and `ROUTING_PROVIDER=google`.
-
-## License
-
-MIT — see repo.
-
+MIT — Open at `:3000` `Dispatch` for routing, `About` for pipeline.
