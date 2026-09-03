@@ -1,3 +1,4 @@
+import logging
 from typing import List, Tuple, Dict, Any, Optional
 from ..models.schemas import (
     CandidateRoute, RouteSegment, RoutePoint, VehicleProfile,
@@ -10,6 +11,7 @@ from .confidence_service import ConfidenceService
 from .weather_service import WeatherService
 import uuid
 import math
+logger = logging.getLogger("resqnet.optimizer")
 
 
 class RouteOptimizer:
@@ -39,6 +41,11 @@ class RouteOptimizer:
             segments = self._build_segments(route_data, vehicle, route_is_sim, route_provider, weather_data)
             total_dist = sum(s.distance_km for s in segments)
             total_dur = sum(s.duration_seconds for s in segments)
+            # Geometry-derived features from raw points
+            points = route_data.get("points", [])
+            turn_info = self._analyze_geometry(points)
+            major_pct = sum(1 for s in segments if s.is_highway) / max(len(segments),1)
+            narrow_pct = sum(1 for s in segments if s.road_width_meters < 4.5) / max(len(segments),1)
             candidate = CandidateRoute(
                 route_id=str(uuid.uuid4())[:8],
                 segments=segments,
@@ -47,6 +54,10 @@ class RouteOptimizer:
                 is_simulated=route_is_sim,
                 provider=route_provider,
                 data_quality=data_quality,
+                num_turns=turn_info["num_turns"],
+                major_road_pct=round(major_pct, 3),
+                narrow_road_pct=round(narrow_pct, 3),
+                avg_bearing_change_deg=round(turn_info["avg_bearing_change"], 2),
             )
             # Evaluate feasibility immediately
             feasibility, violations, warnings = VehicleConstraints.check_route(candidate, vehicle, incident)
@@ -56,7 +67,32 @@ class RouteOptimizer:
             # Confidence
             candidate.confidence = ConfidenceService.compute_route_confidence(candidate)
             candidates.append(candidate)
+        logger.info(f"Built {len(candidates)} candidates for {incident.category}/{incident.medical_subtype} via {provider}: " + ", ".join([f"{c.route_id}(turns={c.num_turns}, major={c.major_road_pct:.0%}, narrow={c.narrow_road_pct:.0%}, dur={c.total_duration_seconds}s)" for c in candidates]))
         return candidates
+
+    def _analyze_geometry(self, points: List[Dict[str, float]]) -> Dict[str, Any]:
+        if len(points) < 3:
+            return {"num_turns": 0, "avg_bearing_change": 0.0}
+        bearings = []
+        for i in range(len(points)-1):
+            lat1, lon1 = points[i]["lat"], points[i]["lng"]
+            lat2, lon2 = points[i+1]["lat"], points[i+1]["lng"]
+            dlon = math.radians(lon2-lon1)
+            lat1r, lat2r = math.radians(lat1), math.radians(lat2)
+            x = math.sin(dlon) * math.cos(lat2r)
+            y = math.cos(lat1r)*math.sin(lat2r) - math.sin(lat1r)*math.cos(lat2r)*math.cos(dlon)
+            brng = (math.degrees(math.atan2(x, y)) + 360) % 360
+            bearings.append(brng)
+        turns = 0
+        changes = []
+        for i in range(1, len(bearings)):
+            diff = abs(bearings[i] - bearings[i-1])
+            diff = min(diff, 360-diff)
+            changes.append(diff)
+            if diff > 30:
+                turns += 1
+        avg_change = sum(changes)/len(changes) if changes else 0
+        return {"num_turns": turns, "avg_bearing_change": avg_change}
 
     def _build_segments(self, route_data: dict, vehicle: VehicleProfile, is_simulated: bool = False, provider: str = "unknown", weather_data: Optional[Dict[str, Any]] = None) -> List[RouteSegment]:
         points = route_data.get("points", [])
@@ -188,6 +224,14 @@ class RouteOptimizer:
     ) -> RouteScore:
         avg_traffic = sum(s.traffic_level for s in route.segments) / max(len(route.segments), 1)
         avg_road_q = sum(s.road_quality for s in route.segments) / max(len(route.segments), 1)
+        # Geometry-derived
+        num_turns = getattr(route, "num_turns", 0)
+        major_pct = getattr(route, "major_road_pct", 0)
+        narrow_pct = getattr(route, "narrow_road_pct", 0)
+        # Turn score 0-10: few turns =0, many turns =10
+        turn_score = min(10, (num_turns / max(len(route.segments),1)) * 12)
+        major_road_score = (1 - major_pct) * 8  # prefer major roads -> lower penalty when major_pct high
+        narrow_penalty = narrow_pct * 8
 
         # Every component is a penalty where lower is better. Values are kept on
         # a roughly 0-10 scale so one component cannot overwhelm the others.
@@ -196,23 +240,31 @@ class RouteOptimizer:
         road_quality_score = (1 - avg_road_q) * 10
         incident_comfort_score = self._incident_comfort(route, incident)
         vehicle_suit = self._vehicle_suitability(route, vehicle)
+        # incorporate narrow/major into vehicle suitability for fire/disaster
+        if incident.category == EmergencyCategory.FIRE:
+            vehicle_suit = max(vehicle_suit, narrow_penalty * 1.2)
+            # Fire prefers major roads: penalize low major_pct
+            vehicle_suit += major_road_score * 0.5
+        elif incident.category == EmergencyCategory.DISASTER:
+            vehicle_suit = max(vehicle_suit, narrow_penalty)
+            # Disaster also prefers reliability
+            pass
         # Weather penalty: use service if weather_data available
         if weather_data:
             weather_score = self.weather_service.weather_risk_score(weather_data)
-            # Apply to route: if weather bad, add penalty
         else:
             weather_score = self._weather_penalty(route)
         driver_cond = 0.0
 
-        # Reliability score: combination of road_quality + traffic + weather + feasibility
-        reliability_score = (road_quality_score * 0.4 + traffic_score * 0.3 + weather_score * 0.3)
+        # Reliability score: combination of road_quality + traffic + weather + feasibility + narrow
+        reliability_score = (road_quality_score * 0.35 + traffic_score * 0.25 + weather_score * 0.25 + narrow_penalty * 0.15)
         if route.feasibility == "risky":
             reliability_score += 2
         if route.feasibility == "impossible":
             reliability_score += 5
 
-        # Comfort score same as incident_comfort but explicit
-        comfort_score = incident_comfort_score
+        # Comfort score: incident_comfort + turn penalty
+        comfort_score = incident_comfort_score + turn_score * 0.3
 
         constraint_pen = 0
         for seg in route.segments:
@@ -290,15 +342,24 @@ class RouteOptimizer:
             return 0.0
 
         avg_quality = sum(s.road_quality for s in route.segments) / max(len(route.segments), 1)
-        sharp_turns = sum(1 for s in route.segments if not s.is_highway) / max(len(route.segments), 1)
+        # Real turn density from geometry vs proxy
+        num_turns = getattr(route, "num_turns", 0)
+        turn_density = num_turns / max(len(route.segments), 1)
+        # Also bearing change
+        avg_bearing = getattr(route, "avg_bearing_change_deg", 0)
+        turn_factor = turn_density * 3 + (avg_bearing / 90.0) * 2
 
         if incident.medical_subtype == MedicalSubType.SPINAL:
-            return (1 - avg_quality) * 8 + sharp_turns * 4
+            # Extremely high penalty for poor roads and turns
+            return (1 - avg_quality) * 10 + turn_factor * 6
         elif incident.medical_subtype == MedicalSubType.CARDIAC:
-            return 2.0
+            # Comfort less important than speed -> low flat penalty
+            return 1.0 + turn_factor * 0.3
         elif incident.medical_subtype == MedicalSubType.MATERNITY:
-            return (1 - avg_quality) * 6 + sharp_turns * 3
-        return 2.0
+            return (1 - avg_quality) * 7 + turn_factor * 4
+        elif incident.medical_subtype == MedicalSubType.TRAUMA:
+            return (1 - avg_quality) * 5 + turn_factor * 2
+        return (1 - avg_quality) * 4 + turn_factor * 1.5
 
     def _vehicle_suitability(self, route: CandidateRoute, vehicle: VehicleProfile) -> float:
         penalty = 0
@@ -329,9 +390,10 @@ class RouteOptimizer:
         if not scored_routes:
             raise ValueError("No feasible routes were generated")
 
-        # Compare routes relative to the available alternatives. Absolute ETA
-        # in hours can otherwise overwhelm every other factor on long trips.
         weights = self._get_weights(incident, vehicle)
+        strategy = get_strategy(incident)
+        logger.info(f"Emergency type: {incident.category}/{incident.medical_subtype} priority={incident.priority} -> strategy={strategy.name} weights={weights}")
+
         fields = (
             "time_score", "traffic_score", "road_quality_score",
             "incident_comfort_score", "vehicle_suitability_score",
@@ -344,6 +406,7 @@ class RouteOptimizer:
             )
             for field in fields
         }
+        logger.info(f"Ranges for normalization: {ranges}")
 
         def normalized(field: str, score: RouteScore) -> float:
             low, high = ranges[field]
@@ -351,15 +414,31 @@ class RouteOptimizer:
                 return 0.5
             return (getattr(score, field) - low) / (high - low)
 
+        for route, score in scored_routes:
+            logger.info(f"Candidate {route.route_id} raw: time={score.time_score:.3f} traffic={score.traffic_score:.3f} road_q={score.road_quality_score:.3f} comfort={score.incident_comfort_score:.3f} vehicle={score.vehicle_suitability_score:.3f} weather={score.weather_score:.3f} penalty={score.constraint_penalties} turns={route.num_turns} major={route.major_road_pct:.0%} narrow={route.narrow_road_pct:.0%} feasibility={route.feasibility}")
+            for field in fields:
+                n = normalized(field, score)
+                wkey = field.replace("_score", "")
+                # weight key mapping
+                wk = wkey
+                if wk == "incident_comfort":
+                    wk = "incident_comfort"
+                logger.info(f"  {route.route_id} {field}: raw={getattr(score, field):.3f} norm={n:.3f} weight={weights.get(wk,0):.3f} weighted={weights.get(wk,0)*n:.4f}")
+
         for _, score in scored_routes:
             relative_score = sum(
                 weights[field.replace("_score", "")] * normalized(field, score)
                 for field in fields
             )
             score.total_score = round(relative_score, 3)
+            logger.info(f"Candidate {score.route_id} final normalized total={score.total_score:.3f}")
 
         scored_routes.sort(key=lambda x: x[1].total_score)
-        return scored_routes[0]
+        best_route, best_score = scored_routes[0]
+        logger.info(f"Final ranking: " + " > ".join([f"{r.route_id}({s.total_score:.3f})" for r,s in scored_routes]) + f" => BEST {best_route.route_id} reason: lowest weighted penalty")
+        for r, s in scored_routes[1:]:
+            logger.info(f"Rejected {r.route_id} reason: higher total {s.total_score:.3f} vs best {best_score.total_score:.3f} (feasibility {r.feasibility})")
+        return best_route, best_score
 
     # Legacy compatibility for routing_service fallback
     def _mock_directions(self, origin, destination, alternatives=True):

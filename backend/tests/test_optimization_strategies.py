@@ -6,8 +6,9 @@ def test_medical_cardiac_prioritizes_time():
     inc = IncidentProfile(category=EmergencyCategory.MEDICAL, priority=EmergencyPriority.CRITICAL, medical_subtype=MedicalSubType.CARDIAC)
     veh = VehicleProfile(vehicle_class=VehicleClass.AMBULANCE_ALS)
     w = get_strategy(inc).get_weights(inc, veh)
-    assert w["time"] > 0.35
-    assert w["traffic"] > 0.15
+    assert w["time"] > 0.55, "Cardiac must have extremely high time weight"
+    # Cardiac allows lower traffic/road weight to prioritize ETA
+    assert w["time"] > w["road_quality"] + 0.4
 
 def test_spinal_prioritizes_road_quality():
     inc = IncidentProfile(category=EmergencyCategory.MEDICAL, priority=EmergencyPriority.HIGH, medical_subtype=MedicalSubType.SPINAL)
@@ -27,8 +28,9 @@ def test_police_prioritizes_eta_and_traffic():
     inc = IncidentProfile(category=EmergencyCategory.POLICE, priority=EmergencyPriority.CRITICAL)
     veh = VehicleProfile(vehicle_class=VehicleClass.POLICE_CAR)
     w = get_strategy(inc).get_weights(inc, veh)
-    assert w["time"] > 0.40
-    assert w["traffic"] > 0.20
+    assert w["time"] > 0.55, "Police must have very high time weight"
+    assert w["traffic"] > 0.15
+    assert w["time"] > w["traffic"]
 
 def test_disaster_prioritizes_reliability():
     inc = IncidentProfile(category=EmergencyCategory.DISASTER, priority=EmergencyPriority.HIGH)

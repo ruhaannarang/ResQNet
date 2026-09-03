@@ -1,6 +1,6 @@
 from typing import List, Tuple
 from ..models.schemas import CandidateRoute, VehicleProfile, IncidentProfile
-from ..models.enums import VehicleClass, EmergencyCategory
+from ..models.enums import VehicleClass, EmergencyCategory, MedicalSubType
 
 class ConstraintViolation(BaseModelLike := object):
     pass
@@ -53,7 +53,17 @@ class VehicleConstraints:
                     f"{seg_label}: Unpaved / very poor road (quality {seg.road_quality:.2f}) not suitable for this vehicle"
                 )
             elif seg.road_quality < 0.45:
-                warnings.append(f"{seg_label}: Poor road quality {seg.road_quality:.2f} - patient comfort risk")
+                # Incident-aware: cardiac allows poorer roads, spinal/maternity very strict
+                threshold = 0.45
+                if incident.category == EmergencyCategory.MEDICAL:
+                    if incident.medical_subtype == MedicalSubType.CARDIAC:
+                        threshold = 0.30  # cardiac allows rougher
+                    elif incident.medical_subtype == MedicalSubType.SPINAL:
+                        threshold = 0.60  # spinal very strict
+                    elif incident.medical_subtype == MedicalSubType.MATERNITY:
+                        threshold = 0.55
+                if seg.road_quality < threshold:
+                    warnings.append(f"{seg_label}: Poor road quality {seg.road_quality:.2f} - patient comfort risk (threshold {threshold})")
 
             # Weight: soft warning unless weight data available (currently estimated, so never hard fail on weight)
             # But if weight is explicitly very low quality and vehicle heavy, warn

@@ -70,7 +70,13 @@ class OSRMRoutingProvider(RoutingProvider):
                 "points": points,
                 "is_simulated": False,
                 "source": "osrm",
-                # Real geometry, but ancillary attributes are not from OSRM - mark as estimated later
+                # OSRM has no live traffic/width/clearance — deterministic per-class estimates so optimizer can compare alternatives
+                "traffic_congestion": min(0.9, 0.10 + idx * 0.06),
+                "road_quality": max(0.65, 0.90 - idx * 0.08),
+                "base_speed_kmh": max(15, min(90, base_speed)),
+                "road_width_meters": max(4.2, 7.0 - idx * 0.9),
+                "bridge_clearance_meters": max(3.4, 5.5 - idx * 0.7),
+                "is_highway": idx == 0,
                 "raw_osrm": route,
             })
         return {"routes": routes, "source": "osrm", "is_simulated": False, "status": "OK"}

@@ -31,13 +31,18 @@ class MockRoutingProvider(RoutingProvider):
 
         for route_idx in range(3 if alternatives else 1):
             points = []
+            # Create distinct geometry per route: offset + extra wiggle for many turns on route 0
             offset_scale = (route_idx - 1) * 0.018
             for i in range(num_points + 1):
                 t = i / num_points
                 base = interpolate(origin, destination, t)
                 curve = math.sin(math.pi * t) * offset_scale
-                offset_lat = curve * max(abs(lat_span), 0.01)
-                offset_lng = curve * max(abs(lng_span), 0.01)
+                # Route 0 (A) has extra zigzag to simulate many turns
+                zigzag = 0
+                if route_idx == 0:
+                    zigzag = math.sin(t * math.pi * 6) * 0.002
+                offset_lat = curve * max(abs(lat_span), 0.01) + zigzag
+                offset_lng = curve * max(abs(lng_span), 0.01) + zigzag * 0.5
                 points.append({
                     "lat": round(base.latitude + offset_lat, 6),
                     "lng": round(base.longitude + offset_lng, 6),
@@ -45,7 +50,9 @@ class MockRoutingProvider(RoutingProvider):
             direct_dist = self._haversine_km(origin, destination)
             detour_factor = (1.02, 1.12, 1.28)[route_idx]
             dist_km = direct_dist * detour_factor
-            traffic = ((seed % 16) / 100) + (0.18, 0.04, 0.10)[route_idx]
+            # Spec-aligned: A fastest heavy traffic poor quality many turns, B medium low traffic excellent few turns, C longest moderate wide major
+            traffic = (0.82, 0.15, 0.45)[route_idx]
+            quality = (0.35, 0.92, 0.65)[route_idx]
             routes.append({
                 "summary": f"Simulated Route {chr(65+route_idx)}",
                 "distance_km": round(dist_km, 2),
@@ -53,10 +60,12 @@ class MockRoutingProvider(RoutingProvider):
                 "points": points,
                 "is_simulated": True,
                 "source": "mock",
-                "_mock_traffic": round(min(0.9, traffic), 3),
-                "_mock_quality": (0.86, 0.90, 0.72)[route_idx],
-                "_mock_width": (7.0, 6.0, 4.2)[route_idx],
-                "_mock_clearance": (5.5, 4.8, 3.4)[route_idx],
+                "_mock_traffic": traffic,
+                "_mock_quality": quality,
+                "_mock_width": (4.5, 6.0, 7.5)[route_idx],  # A narrow, C wide for fire
+                "_mock_clearance": (5.5, 4.8, 5.8)[route_idx],
+                "base_speed_kmh": (48, 41, 34)[route_idx],
+                "is_highway": route_idx == 2,  # C is major road
             })
         return {"routes": routes, "source": "mock", "is_simulated": True, "status": "OK", "warning": "Simulated geometry - not real roads"}
 

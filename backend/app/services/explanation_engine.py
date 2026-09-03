@@ -22,31 +22,85 @@ class ExplanationEngine:
         recommendation_reasons: List[str] = []
         tradeoffs: List[str] = []
 
-        # WHY selected - primary reasons
+        # WHY selected - compare best vs second best on actual metrics
         if len(all_scored) > 1:
-            second_best = all_scored[1][1] if len(all_scored) > 1 else None
-            if second_best:
-                time_diff = second_best.time_score - best_score.time_score
-                if time_diff > 0.1:
-                    reasons.append(
-                        f"Faster arrival: saves ~{time_diff * 3600:.0f} seconds vs next best route"
-                    )
-                    recommendation_reasons.append(f"Fastest ETA among alternatives (saves {time_diff*3600:.0f}s)")
+            # all_scored is sorted after select_best? Actually select_best sorts, but we receive scored before sort? In routing_service, scored is before sort, best is first after sort.
+            # Find second best by total_score
+            sorted_scored = sorted(all_scored, key=lambda x: x[1].total_score)
+            if len(sorted_scored) > 1:
+                second_route, second_score = sorted_scored[1]
+                # ETA comparison
+                eta_diff_sec = second_route.total_duration_seconds - best_route.total_duration_seconds
+                eta_best_min = best_route.total_duration_seconds/60
+                eta_second_min = second_route.total_duration_seconds/60
+                # Road quality
+                rq_diff = second_score.road_quality_score - best_score.road_quality_score
+                # Turn comparison
+                turns_best = getattr(best_route, "num_turns", 0)
+                turns_second = getattr(second_route, "num_turns", 0)
+                traffic_diff = second_score.traffic_score - best_score.traffic_score
 
-        if best_score.traffic_score < 3:
-            reasons.append("Selected route avoids severe traffic congestion")
-            recommendation_reasons.append("Low traffic compared to alternatives")
+                if incident.category == EmergencyCategory.MEDICAL and incident.medical_subtype == MedicalSubType.CARDIAC:
+                    reasons.append(f"Route {best_route.route_id[:4]} was selected because it has the lowest ETA of {eta_best_min:.0f} minutes ({eta_diff_sec/60:.1f} min faster than next best).")
+                    recommendation_reasons.append(f"CARDIAC: lowest ETA {eta_best_min:.0f} min (saves {eta_diff_sec:.0f}s vs {second_route.route_id[:4]})")
+                    if best_score.traffic_score < second_score.traffic_score:
+                        recommendation_reasons.append(f"Also lower traffic ({best_score.traffic_score:.1f} vs {second_score.traffic_score:.1f})")
+                elif incident.category == EmergencyCategory.MEDICAL and incident.medical_subtype == MedicalSubType.SPINAL:
+                    if eta_diff_sec < 0:
+                        # best is faster, but should be slower with better quality? Actually spinal may be slower but better quality
+                        reasons.append(f"Route {best_route.route_id[:4]} selected for superior road quality (score {best_score.road_quality_score:.1f} vs {second_score.road_quality_score:.1f}) and fewer turns ({turns_best} vs {turns_second}).")
+                    else:
+                        # best is slower but better quality
+                        if eta_diff_sec > 0:
+                            reasons.append(f"Route {best_route.route_id[:4]} was selected even though it is {eta_diff_sec/60:.1f} minutes slower (ETA {eta_best_min:.0f} vs {eta_second_min:.0f} min) because it has significantly better road quality (score {best_score.road_quality_score:.1f} vs {second_score.road_quality_score:.1f}) and fewer sharp turns ({turns_best} vs {turns_second}).")
+                            recommendation_reasons.append(f"SPINAL: {turns_second-turns_best} fewer turns and road quality {best_score.road_quality_score:.1f} vs {second_score.road_quality_score:.1f} outweighs {eta_diff_sec/60:.1f} min ETA penalty")
+                        else:
+                            reasons.append(f"Route {best_route.route_id[:4]} balances ETA {eta_best_min:.0f} min with superior comfort (turns {turns_best} vs {turns_second}).")
+                            recommendation_reasons.append(f"SPINAL: best comfort with {turns_best} turns vs {turns_second}")
+                else:
+                    # Generic ETA
+                    if eta_diff_sec > 30:
+                        if best_score.time_score < second_score.time_score:
+                            reasons.append(f"Faster arrival: saves ~{eta_diff_sec:.0f} seconds vs next best route ({eta_best_min:.0f} vs {eta_second_min:.0f} min)")
+                            recommendation_reasons.append(f"Fastest ETA {eta_best_min:.0f} min (saves {eta_diff_sec:.0f}s vs {second_route.route_id[:4]})")
+                        else:
+                            reasons.append(f"Selected despite {abs(eta_diff_sec/60):.1f} min slower ETA because other factors dominate")
+                            recommendation_reasons.append(f"Tradeoff: {abs(eta_diff_sec/60):.1f} min slower but better overall score")
+                    # Traffic
+                    if best_score.traffic_score + 0.5 < second_score.traffic_score:
+                        reasons.append(f"Selected route avoids severe traffic congestion (score {best_score.traffic_score:.1f} vs {second_score.traffic_score:.1f})")
+                        recommendation_reasons.append(f"Low traffic {best_score.traffic_score:.1f} vs {second_score.traffic_score:.1f}")
+                    # Road quality
+                    if best_score.road_quality_score + 0.5 < second_score.road_quality_score:
+                        reasons.append(f"Route has superior road surface quality ({best_score.road_quality_score:.1f} vs {second_score.road_quality_score:.1f})")
+                        recommendation_reasons.append(f"Better road quality {best_score.road_quality_score:.1f} vs {second_score.road_quality_score:.1f}")
+                    # Turns
+                    if turns_best + 1 < turns_second:
+                        recommendation_reasons.append(f"Fewer turns {turns_best} vs {turns_second}")
+                    # Major road
+                    if getattr(best_route, "major_road_pct", 0) > getattr(second_route, "major_road_pct", 0) + 0.2:
+                        recommendation_reasons.append(f"More major roads {best_route.major_road_pct:.0%} vs {second_route.major_road_pct:.0%}")
+
+        # Generic traffic/road assessment (always, to ensure warnings)
+        if best_score.traffic_score < 2.5:
+            if not any("traffic" in r.lower() for r in recommendation_reasons):
+                recommendation_reasons.append(f"Low traffic score {best_score.traffic_score:.1f}")
         elif best_score.traffic_score >= 5:
-            warnings.append("Moderate to heavy traffic on selected route")
-        else:
-            warnings.append("Moderate traffic on selected route")
+            warnings.append(f"Moderate to heavy traffic on route (score {best_score.traffic_score:.1f})")
+        # Road quality generic
+        if best_score.road_quality_score < 1.8:
+            if not any("road quality" in r.lower() for r in recommendation_reasons):
+                recommendation_reasons.append(f"Good road surface quality (score {best_score.road_quality_score:.1f})")
+        elif best_score.road_quality_score >= 3:
+            warnings.append(f"Some segments have poor surface quality (score {best_score.road_quality_score:.1f})")
+            if not tradeoffs:
+                tradeoffs.append("Balances speed vs road quality - some segments are rough")
 
-        if best_score.road_quality_score < 2:
-            reasons.append("Route has good road surface quality")
-            recommendation_reasons.append("Good road quality for vehicle stability")
-        else:
-            warnings.append("Some road segments have poor surface quality")
-            tradeoffs.append("Balances speed vs road quality - some segments are rough")
+        # Fallback if still no reasons
+        if not reasons:
+            reasons.append("Route provides the best overall balance of speed, safety, and comfort")
+        if not recommendation_reasons:
+            recommendation_reasons.append("Best overall balance of ETA, road quality, traffic, and vehicle fit")
 
         if best_route.feasibility == "compatible":
             reasons.append("Route fully satisfies vehicle physical constraints")

@@ -114,6 +114,11 @@ class CandidateRoute(BaseModel):
     feasibility: str = "compatible"  # compatible | risky | impossible
     feasibility_reasons: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
+    # Geometry-derived features
+    num_turns: int = 0
+    major_road_pct: float = 0.0
+    narrow_road_pct: float = 0.0
+    avg_bearing_change_deg: float = 0.0
 
 
 class RouteScore(BaseModel):
@@ -131,6 +136,8 @@ class RouteScore(BaseModel):
     eta_score: Optional[float] = None
     reliability_score: Optional[float] = None
     comfort_score: Optional[float] = None
+    turn_score: Optional[float] = None
+    major_road_score: Optional[float] = None
 
 
 class RouteExplanation(BaseModel):

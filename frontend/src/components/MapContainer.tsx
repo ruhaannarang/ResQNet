@@ -77,6 +77,62 @@ function MapViewController({
   return null
 }
 
+function ZoomControls({ origin, destination, result }: { origin: GPSPosition; destination: GPSPosition; result: OptimizedResult | null }) {
+  const map = useMap()
+  useEffect(() => {
+    const onFs = () => setTimeout(() => map.invalidateSize(), 100)
+    document.addEventListener('fullscreenchange', onFs)
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [map])
+  return (
+    <div className="absolute right-4 top-1/2 -translate-y-1/2 z-[1000] flex flex-col bg-white rounded-xl shadow-elevated border border-slate-200 overflow-hidden pointer-events-auto">
+      <button
+        type="button"
+        onClick={() => map.zoomIn()}
+        className="w-9 h-9 grid place-items-center hover:bg-slate-50 text-slate-700 border-b border-slate-200"
+        title="Zoom in"
+        aria-label="Zoom in"
+      >
+        <span className="text-lg font-bold leading-none">+</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => map.zoomOut()}
+        className="w-9 h-9 grid place-items-center hover:bg-slate-50 text-slate-700"
+        title="Zoom out"
+        aria-label="Zoom out"
+      >
+        <span className="text-lg font-bold leading-none">−</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (result && result.best_route.segments.length > 0) {
+            const pts: [number, number][] = result.best_route.segments.flatMap((s) => [
+              [s.start.latitude, s.start.longitude],
+              [s.end.latitude, s.end.longitude],
+            ])
+            map.fitBounds(L.latLngBounds(pts), { padding: [50, 50] })
+          } else {
+            map.fitBounds(
+              L.latLngBounds([
+                [origin.latitude, origin.longitude],
+                [destination.latitude, destination.longitude],
+              ]),
+              { padding: [70, 70], maxZoom: 15 },
+            )
+          }
+        }}
+        className="w-9 h-9 grid place-items-center hover:bg-slate-50 text-slate-600 border-t border-slate-200"
+        title="Fit to route"
+        aria-label="Fit to route"
+      >
+        <Maximize2 className="w-4 h-4" />
+      </button>
+    </div>
+  )
+}
+
 export function MapContainer({
   origin,
   destination,
@@ -110,14 +166,25 @@ export function MapContainer({
   const destIcon = createPin('dest', labels.destinationShort.charAt(0).toUpperCase())
 
   return (
-    <div className="h-full w-full relative bg-slate-100 overflow-hidden">
-      <LeafletMap center={center} zoom={13} className="h-full w-full" zoomControl={false}>
+    <div id="resqnet-map" className="h-full w-full relative bg-slate-100 overflow-hidden">
+      <LeafletMap
+        center={center}
+        zoom={13}
+        className="h-full w-full"
+        zoomControl={false}
+        scrollWheelZoom={true}
+        doubleClickZoom={true}
+        dragging={true}
+        keyboard={true}
+        touchZoom={true}
+      >
         <MapViewController origin={origin} destination={destination} result={result} />
         <TileLayer
           attribution='&copy; OpenStreetMap &bull; ResQNet OSRM'
           url={tile === 'light' ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png' : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'}
         />
         <MapClickHandler onMapClick={onMapClick} selectionMode={selectionMode} />
+        <ZoomControls origin={origin} destination={destination} result={result} />
 
         <Marker position={[origin.latitude, origin.longitude]} icon={originIcon}>
           <Tooltip permanent direction="top" offset={[0, -26]}>
@@ -206,7 +273,17 @@ export function MapContainer({
             <button onClick={() => setTile('light')} className={`px-3 py-1.5 rounded-xl text-xs font-semibold ${tile==='light' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Light</button>
             <button onClick={() => setTile('dark')} className={`px-3 py-1.5 rounded-xl text-xs font-semibold ${tile==='dark' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Dark</button>
           </div>
-          <button className="w-9 h-9 grid place-items-center bg-white rounded-xl shadow-elevated border border-slate-200 text-slate-600 hover:text-slate-900">
+          <button
+            onClick={() => {
+              const el = document.getElementById('resqnet-map')
+              if (!el) return
+              if (!document.fullscreenElement) el.requestFullscreen?.()
+              else document.exitFullscreen?.()
+            }}
+            className="w-9 h-9 grid place-items-center bg-white rounded-xl shadow-elevated border border-slate-200 text-slate-600 hover:text-slate-900"
+            title="Toggle fullscreen"
+            aria-label="Toggle fullscreen"
+          >
             <Maximize2 className="w-4 h-4" />
           </button>
         </div>
@@ -244,18 +321,6 @@ export function MapContainer({
         </div>
       </div>
 
-      {/* Empty state overlay when no result */}
-      {!result && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[1000] pointer-events-none hidden lg:block">
-          <div className="bg-white/90 backdrop-blur rounded-2xl shadow-elevated border border-slate-200 px-5 py-4 text-center min-w-[360px]">
-            <div className="w-10 h-10 rounded-xl bg-slate-900 text-white grid place-items-center mx-auto mb-2">
-              <MapPinned className="w-5 h-5" />
-            </div>
-            <div className="text-sm font-semibold text-slate-900">Ready to dispatch</div>
-            <div className="text-xs text-slate-500 mt-1 leading-relaxed">Configure the incident and vehicle, then press <span className="font-semibold text-slate-700">Dispatch Optimal Route</span>.<br />Alternatives appear as dashed lines.</div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
