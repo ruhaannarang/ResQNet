@@ -1,0 +1,12 @@
+name: resqnet-backend
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scikit-learn
+  - psycopg2
+  - pydantic
+  - pip:
+    - -r requirements.txt

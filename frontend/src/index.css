@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-lg shadow-md p-4;
+  }
+
+  .btn-primary {
+    @apply bg-emergency-blue text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium;
+  }
+
+  .btn-danger {
+    @apply bg-emergency-red text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors font-medium;
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emergency-blue focus:border-transparent;
+  }
+
+  .badge-critical {
+    @apply bg-red-100 text-red-800 text-xs font-medium px-2 py-0.5 rounded-full;
+  }
+
+  .badge-high {
+    @apply bg-orange-100 text-orange-800 text-xs font-medium px-2 py-0.5 rounded-full;
+  }
+
+  .badge-medium {
+    @apply bg-yellow-100 text-yellow-800 text-xs font-medium px-2 py-0.5 rounded-full;
+  }
+}
