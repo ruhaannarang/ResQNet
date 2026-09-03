@@ -1,4 +1,4 @@
-import { Shield, Activity, Radio, Bell, HelpCircle, ChevronDown, Search } from 'lucide-react'
+import { Shield, Activity, Layers } from 'lucide-react'
 
 interface Props {
   activeView: string
@@ -7,7 +7,7 @@ interface Props {
   userCity?: string
 }
 
-export function Header({ activeView: _activeView, onViewChange, isUsingCurrentLocation, userCity }: Props) {
+export function Header({ activeView, onViewChange, isUsingCurrentLocation, userCity }: Props) {
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200">
       {/* Top bar */}
@@ -29,26 +29,25 @@ export function Header({ activeView: _activeView, onViewChange, isUsingCurrentLo
             </div>
           </div>
 
-          <div className="hidden lg:block h-8 w-px bg-slate-200" />
+          <div className="hidden sm:block h-8 w-px bg-slate-200" />
 
-          <nav className="hidden lg:flex items-center gap-1">
-            <button className="px-3.5 py-2 rounded-xl bg-slate-900 text-white text-sm font-semibold shadow-sm">Dispatch</button>
-            <button onClick={() => onViewChange('fleet')} className="px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors">Fleet Overview</button>
-            <button onClick={() => onViewChange('analytics')} className="px-3.5 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors">Analytics</button>
-            <button className="px-3.5 py-2 rounded-xl text-sm font-medium text-slate-400 cursor-not-allowed flex items-center gap-1.5">Logs <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full font-semibold">Soon</span></button>
+          <nav className="flex items-center gap-1">
+            <button
+              onClick={() => onViewChange('dispatch')}
+              className={`px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${activeView === 'dispatch' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+            >
+              Dispatch
+            </button>
+            <button
+              onClick={() => onViewChange('about')}
+              className={`px-3 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${activeView === 'about' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+            >
+              <Layers className="w-4 h-4" /> About
+            </button>
           </nav>
         </div>
 
-        {/* Center search - hidden on mobile */}
-        <div className="hidden xl:flex items-center flex-1 max-w-[360px] mx-4">
-          <div className="relative w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input placeholder="Search incidents, vehicles, routes…" className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-slate-300 focus:ring-4 focus:ring-slate-900/[0.04] transition-all" />
-            <span className="absolute right-2 top-1/2 -translate-y-1/2 hidden lg:inline-flex text-[11px] font-medium text-slate-400 border border-slate-200 bg-white rounded-md px-1.5 py-1">⌘ K</span>
-          </div>
-        </div>
-
-        {/* Right */}
+        {/* Right — minimal */}
         <div className="flex items-center gap-2">
           <div className="hidden md:flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full border border-emerald-200 bg-emerald-50">
             <span className="relative flex h-2 w-2">
@@ -58,32 +57,6 @@ export function Header({ activeView: _activeView, onViewChange, isUsingCurrentLo
             <span className="text-xs font-semibold text-emerald-800 tracking-wide">Operational</span>
             <span className="hidden lg:inline text-xs text-emerald-600">• OSRM Live</span>
           </div>
-
-          <div className="hidden sm:flex items-center gap-1">
-            <button className="w-9 h-9 grid place-items-center rounded-xl hover:bg-slate-50 text-slate-600 transition-colors relative">
-              <Radio className="w-[18px] h-[18px]" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
-            </button>
-            <button className="w-9 h-9 grid place-items-center rounded-xl hover:bg-slate-50 text-slate-600 transition-colors relative">
-              <Bell className="w-[18px] h-[18px]" />
-              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 grid place-items-center bg-slate-900 text-white text-[10px] font-bold rounded-full">3</span>
-            </button>
-            <button className="w-9 h-9 grid place-items-center rounded-xl hover:bg-slate-50 text-slate-600 transition-colors">
-              <HelpCircle className="w-[18px] h-[18px]" />
-            </button>
-          </div>
-
-          <div className="h-6 w-px bg-slate-200 hidden sm:block" />
-
-          <div className="flex items-center gap-2.5 pl-1">
-            <div className="hidden sm:block text-right leading-none">
-              <div className="text-sm font-semibold text-slate-900 flex items-center gap-1 justify-end">Command Unit <ChevronDown className="w-3.5 h-3.5 text-slate-400" /></div>
-              <div className="text-xs text-slate-500">
-                {userCity ? `${userCity} • Alpha Dispatch` : isUsingCurrentLocation ? 'Live GPS Dispatch' : 'Local Dispatch Sector'}
-              </div>
-            </div>
-            <div className="w-9 h-9 rounded-xl bg-slate-900 text-white grid place-items-center text-sm font-bold shadow-sm">JD</div>
-          </div>
         </div>
       </div>
 
@@ -92,16 +65,18 @@ export function Header({ activeView: _activeView, onViewChange, isUsingCurrentLo
         <div className="flex items-center gap-2 text-slate-500">
           <span className="hidden sm:inline font-medium">Operations</span>
           <span className="hidden sm:inline text-slate-300">/</span>
-          <span className="font-medium text-slate-700">Active Dispatch</span>
+          <span className="font-medium text-slate-700">{activeView === 'about' ? 'About' : 'Active Dispatch'}</span>
           <span className="text-slate-300">›</span>
           <span className="inline-flex items-center gap-1.5 font-medium text-slate-900">
             <Activity className="w-3.5 h-3.5 text-slate-400" />
-            {userCity ? `${userCity} Sector` : isUsingCurrentLocation ? 'Live GPS Sector' : 'Local Sector'}
+            {activeView === 'about' ? 'Service Flow & Stack' : userCity ? `${userCity} Sector` : isUsingCurrentLocation ? 'Live GPS Sector' : 'Local Sector'}
           </span>
-          <span className="hidden md:inline-flex ml-2 items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1 shadow-sm">
-            <span className={`w-1.5 h-1.5 rounded-full ${isUsingCurrentLocation ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-            {isUsingCurrentLocation ? 'Live Location Active' : 'Calibrated Sector'}
-          </span>
+          {activeView !== 'about' && (
+            <span className="hidden md:inline-flex ml-2 items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1 shadow-sm">
+              <span className={`w-1.5 h-1.5 rounded-full ${isUsingCurrentLocation ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              {isUsingCurrentLocation ? 'Live Location Active' : 'Calibrated Sector'}
+            </span>
+          )}
         </div>
         <div className="hidden md:flex items-center gap-3 text-slate-500">
           <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-slate-900" /> OSRM Public • No API Key</span>

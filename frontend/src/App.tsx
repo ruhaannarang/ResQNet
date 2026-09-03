@@ -4,6 +4,7 @@ import { MapContainer } from './components/MapContainer'
 import { EmergencyForm } from './components/EmergencyForm'
 import { RoutePanel } from './components/RoutePanel'
 import { CommandCenter } from './components/CommandCenter'
+import { About } from './components/About'
 import { apiClient } from './services/api'
 import { EmergencyRequest, OptimizedResult, GPSPosition, EmergencyCategory, VehicleClass } from './types'
 import { getLocationLabels } from './utils/locationLabels'
@@ -163,22 +164,19 @@ export default function App() {
   }, [])
 
   const handleViewChange = (v: string) => {
-    if (v !== 'dispatch') {
-      setError(`“${v.charAt(0).toUpperCase()+v.slice(1)}” module is coming soon — stay on Dispatch for live routing.`)
-      setTimeout(() => setError(null), 3500)
-      return
-    }
     setActiveView(v)
+    setError(null)
   }
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC]">
       <Header activeView={activeView} onViewChange={handleViewChange} isUsingCurrentLocation={isUsingCurrentLocation} userCity={userCity} />
 
-      {/* KPI strip */}
-      <div className="bg-white border-b border-slate-200">
-        <KpiStrip hasResult={!!result} result={result} />
-      </div>
+      {activeView === 'dispatch' && (
+        <div className="bg-white border-b border-slate-200">
+          <KpiStrip hasResult={!!result} result={result} />
+        </div>
+      )}
 
       {/* Location notice */}
       {geoNotice && (
@@ -208,113 +206,116 @@ export default function App() {
         </div>
       )}
 
-      {/* Mobile tabs */}
-      <div className="lg:hidden sticky top-[96px] z-30 bg-white border-b border-slate-200 flex p-1.5 gap-1 mx-4 mt-4 rounded-2xl shadow-sm">
-        {[
-          { id: 'form', label: 'Dispatch', icon: Sparkles },
-          { id: 'map', label: 'Live Map', icon: Layers },
-          { id: 'command', label: 'Command', icon: Activity },
-        ].map((t) => (
-          <button key={t.id} onClick={() => setMobileTab(t.id as any)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-colors ${mobileTab===t.id ? 'bg-slate-900 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}>
-            <t.icon className="w-4 h-4" /> {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Main */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden p-4 lg:p-6 gap-6 max-w-[1600px] w-full mx-auto min-h-0">
-        {/* Left */}
-        <aside className={`${mobileTab==='form' ? 'flex' : 'hidden'} lg:flex w-full lg:w-[380px] xl:w-[400px] shrink-0 flex-col gap-4 overflow-y-auto lg:max-h-[calc(100vh-220px)] pr-0 lg:pr-1`}>
-          <div className="panel-card p-5">
-            <div className="flex items-start justify-between gap-3 mb-4">
-              <div>
-                <h2 className="text-[13px] font-extrabold tracking-tight text-slate-900 flex items-center gap-2"><span className="w-1.5 h-7 rounded-full bg-red-600" /> New Emergency Request</h2>
-                {isUsingCurrentLocation && (
-                  <span className="inline-flex items-center gap-1.5 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 mt-2 rounded font-semibold uppercase tracking-wider">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                    GPS Active
-                  </span>
-                )}
-                <p className="text-xs text-slate-500 mt-1 leading-relaxed">Configure incident, vehicle and coordinates. The optimizer evaluates corridors with hard constraints and soft penalties.</p>
-              </div>
-              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase bg-slate-900 text-white px-2.5 py-1 rounded-full">Priority Lane <ChevronRight className="w-3 h-3" /></span>
-            </div>
-            <EmergencyForm
-              onSubmit={handleEmergencySubmit}
-              loading={loading}
-              origin={origin}
-              destination={destination}
-              onUseCurrentLocation={() => requestCurrentLocation(false)}
-              isLocating={isLocating}
-              isUsingCurrentLocation={isUsingCurrentLocation}
-              category={category}
-              onCategoryChange={setCategory}
-              vehicleClass={vehicleClass}
-              onVehicleClassChange={setVehicleClass}
-              labels={labels}
-            />
+      {activeView === 'about' ? (
+        <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+          <About />
+        </div>
+      ) : (
+        <>
+          {/* Mobile tabs */}
+          <div className="lg:hidden sticky top-[96px] z-30 bg-white border-b border-slate-200 flex p-1.5 gap-1 mx-4 mt-4 rounded-2xl shadow-sm">
+            {[
+              { id: 'form', label: 'Dispatch', icon: Sparkles },
+              { id: 'map', label: 'Live Map', icon: Layers },
+              { id: 'command', label: 'Command', icon: Activity },
+            ].map((t) => (
+              <button key={t.id} onClick={() => setMobileTab(t.id as any)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-colors ${mobileTab===t.id ? 'bg-slate-900 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}>
+                <t.icon className="w-4 h-4" /> {t.label}
+              </button>
+            ))}
           </div>
 
-          {result && (
-            <div className="animate-fade-in">
-              <RoutePanel result={result} />
-            </div>
-          )}
-
-          <div className="hidden lg:block panel-card p-4">
-            <div className="text-xs font-bold tracking-widest uppercase text-slate-700 mb-2">How scoring works</div>
-            <div className="text-xs leading-relaxed text-slate-500 space-y-2">
-              <p><span className="font-semibold text-slate-700">Hard constraints</span> reject impossible corridors (width, height, weight, grade). <span className="font-semibold text-slate-700">Soft weights</span> rank feasible routes: time × incident-aware bias, traffic, road quality, comfort, vehicle fit, weather.</p>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="badge bg-slate-900 text-white">AI Optimizer</span>
-                <span className="badge bg-white border border-slate-200 text-slate-600">OSRM Live</span>
-                <span className="badge bg-amber-50 border border-amber-200 text-amber-800">Explainable</span>
+          {/* Main */}
+          <div className="flex-1 flex flex-col lg:flex-row overflow-hidden p-4 lg:p-6 gap-6 max-w-[1600px] w-full mx-auto min-h-0">
+            {/* Left */}
+            <aside className={`${mobileTab==='form' ? 'flex' : 'hidden'} lg:flex w-full lg:w-[380px] xl:w-[400px] shrink-0 flex-col gap-4 overflow-y-auto lg:max-h-[calc(100vh-220px)] pr-0 lg:pr-1`}>
+              <div className="panel-card p-5">
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div>
+                    <h2 className="text-[13px] font-extrabold tracking-tight text-slate-900 flex items-center gap-2"><span className="w-1.5 h-7 rounded-full bg-red-600" /> New Emergency Request</h2>
+                    {isUsingCurrentLocation && (
+                      <span className="inline-flex items-center gap-1.5 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 mt-2 rounded font-semibold uppercase tracking-wider">
+                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                        GPS Active
+                      </span>
+                    )}
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">Configure incident, vehicle and coordinates. The optimizer evaluates corridors with hard constraints and soft penalties.</p>
+                  </div>
+                  <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase bg-slate-900 text-white px-2.5 py-1 rounded-full">Priority Lane <ChevronRight className="w-3 h-3" /></span>
+                </div>
+                <EmergencyForm
+                  onSubmit={handleEmergencySubmit}
+                  loading={loading}
+                  origin={origin}
+                  destination={destination}
+                  onUseCurrentLocation={() => requestCurrentLocation(false)}
+                  isLocating={isLocating}
+                  isUsingCurrentLocation={isUsingCurrentLocation}
+                  category={category}
+                  onCategoryChange={setCategory}
+                  vehicleClass={vehicleClass}
+                  onVehicleClassChange={setVehicleClass}
+                  labels={labels}
+                />
               </div>
-            </div>
-          </div>
-        </aside>
 
-        {/* Center map */}
-        <main className={`${mobileTab==='map' ? 'flex' : 'hidden'} lg:flex flex-1 min-h-[520px] lg:min-h-0 rounded-2xl overflow-hidden border border-slate-200 shadow-elevated bg-white relative`}>
-          <MapContainer
-            origin={origin}
-            destination={destination}
-            result={result}
-            onMapClick={handleMapClick}
-            onUseCurrentLocation={() => requestCurrentLocation(false)}
-            isLocating={isLocating}
-            labels={labels}
-          />
-          {loading && (
-            <div className="absolute inset-0 bg-white/70 backdrop-blur-sm grid place-items-center z-[1001]">
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-elevated px-6 py-5 flex items-center gap-4 min-w-[320px]">
-                <span className="w-10 h-10 rounded-xl bg-slate-900 text-white grid place-items-center"><span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /></span>
-                <div>
-                  <div className="text-sm font-bold text-slate-900">Optimizing corridors…</div>
-                  <div className="text-xs text-slate-500">Evaluating feasibility, traffic and comfort • OSRM live</div>
+              {result && (
+                <div className="animate-fade-in">
+                  <RoutePanel result={result} />
+                </div>
+              )}
+
+              <div className="hidden lg:block panel-card p-4">
+                <div className="text-xs font-bold tracking-widest uppercase text-slate-700 mb-2">How scoring works</div>
+                <div className="text-xs leading-relaxed text-slate-500 space-y-2">
+                  <p><span className="font-semibold text-slate-700">Hard constraints</span> reject impossible corridors (width, height, weight, grade). <span className="font-semibold text-slate-700">Soft weights</span> rank feasible routes: time × incident-aware bias, traffic, road quality, comfort, vehicle fit, weather.</p>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <span className="badge bg-slate-900 text-white">AI Optimizer</span>
+                    <span className="badge bg-white border border-slate-200 text-slate-600">OSRM Live</span>
+                    <span className="badge bg-amber-50 border border-amber-200 text-amber-800">Explainable</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-        </main>
+            </aside>
 
-        {/* Right */}
-        <aside className={`${mobileTab==='command' ? 'flex' : 'hidden'} lg:flex w-full lg:w-[360px] xl:w-[380px] shrink-0 flex-col overflow-y-auto lg:max-h-[calc(100vh-220px)]`}>
-          <div className="panel-card overflow-hidden min-h-[480px]">
-            <CommandCenter
-              result={result}
-              isUsingCurrentLocation={isUsingCurrentLocation}
-              userCity={userCity}
-              labels={labels}
-            />
-          </div>
+            {/* Center map */}
+            <main className={`${mobileTab==='map' ? 'flex' : 'hidden'} lg:flex flex-1 min-h-[520px] lg:min-h-0 rounded-2xl overflow-hidden border border-slate-200 shadow-elevated bg-white relative`}>
+              <MapContainer
+                origin={origin}
+                destination={destination}
+                result={result}
+                onMapClick={handleMapClick}
+                onUseCurrentLocation={() => requestCurrentLocation(false)}
+                isLocating={isLocating}
+                labels={labels}
+              />
+              {loading && (
+                <div className="absolute inset-0 bg-white/70 backdrop-blur-sm grid place-items-center z-[1001]">
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-elevated px-6 py-5 flex items-center gap-4 min-w-[320px]">
+                    <span className="w-10 h-10 rounded-xl bg-slate-900 text-white grid place-items-center"><span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /></span>
+                    <div>
+                      <div className="text-sm font-bold text-slate-900">Optimizing corridors…</div>
+                      <div className="text-xs text-slate-500">Evaluating feasibility, traffic and comfort • OSRM live</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </main>
 
-          <div className="mt-4 panel-card p-4 hidden lg:block">
-            <div className="text-xs font-bold tracking-widest uppercase text-slate-700 mb-2 flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-slate-400" /> Formal ops note</div>
-            <p className="text-xs leading-relaxed text-slate-500">This is a production-grade dispatch surface. Map tiles © OpenStreetMap. Routing via OSRM public — for enterprise SLA, connect Mapbox / HERE with API key in <span className="font-mono font-medium text-slate-700">backend/.env</span>.</p>
+            {/* Right */}
+            <aside className={`${mobileTab==='command' ? 'flex' : 'hidden'} lg:flex w-full lg:w-[360px] xl:w-[380px] shrink-0 flex-col overflow-y-auto lg:max-h-[calc(100vh-220px)]`}>
+              <div className="panel-card overflow-hidden min-h-[480px]">
+                <CommandCenter
+                  result={result}
+                  isUsingCurrentLocation={isUsingCurrentLocation}
+                  userCity={userCity}
+                  labels={labels}
+                />
+              </div>
+            </aside>
           </div>
-        </aside>
-      </div>
+        </>
+      )}
 
       <footer className="border-t border-slate-200 bg-white px-4 lg:px-6 py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
         <span>© 2026 ResQNet • Emergency Routing Platform • Built for command-center reliability</span>
