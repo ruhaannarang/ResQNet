@@ -3,8 +3,6 @@
 @tailwind utilities;
 
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
 }
 
@@ -12,39 +10,80 @@ html, body, #root {
   height: 100%;
   width: 100%;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: #F8FAFC;
+  color: #0F172A;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .leaflet-container {
   height: 100%;
   width: 100%;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #E2E8F0;
 }
 
+/* Leaflet control polish */
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: 0 10px 25px -5px rgba(15,23,42,0.08), 0 4px 6px -1px rgba(15,23,42,0.05) !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+.leaflet-control-zoom a {
+  width: 36px !important;
+  height: 36px !important;
+  line-height: 36px !important;
+  color: #1E293B !important;
+  border-bottom: 1px solid #E2E8F0 !important;
+  font-weight: 600;
+}
+.leaflet-control-attribution {
+  background: rgba(255,255,255,0.9) !important;
+  backdrop-filter: blur(8px);
+  font-size: 10px !important;
+  padding: 2px 8px !important;
+  border-radius: 999px;
+  margin: 8px !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+* { scrollbar-width: thin; scrollbar-color: #CBD5E1 transparent; }
+
 @layer components {
-  .card {
-    @apply bg-white rounded-lg shadow-md p-4;
+  .panel-card {
+    @apply bg-white border border-slate-200 rounded-2xl;
+    box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.06), 0 2px 4px -1px rgba(15, 23, 42, 0.04);
   }
-
-  .btn-primary {
-    @apply bg-emergency-blue text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium;
-  }
-
-  .btn-danger {
-    @apply bg-emergency-red text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors font-medium;
-  }
-
   .input-field {
-    @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emergency-blue focus:border-transparent;
+    @apply w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition-all;
   }
+  .label-formal {
+    @apply block text-[11px] font-semibold tracking-widest uppercase text-slate-500 mb-1.5;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 bg-slate-900 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-800 active:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 bg-[#DC2626] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#B91C1C] active:bg-[#991B1B] transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors;
+  }
+  .badge {
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold tracking-wide;
+  }
+}
 
-  .badge-critical {
-    @apply bg-red-100 text-red-800 text-xs font-medium px-2 py-0.5 rounded-full;
-  }
-
-  .badge-high {
-    @apply bg-orange-100 text-orange-800 text-xs font-medium px-2 py-0.5 rounded-full;
-  }
-
-  .badge-medium {
-    @apply bg-yellow-100 text-yellow-800 text-xs font-medium px-2 py-0.5 rounded-full;
-  }
+/* Subtle grid pattern for header */
+.bg-grid-slate {
+  background-image: radial-gradient(circle at 1px 1px, rgba(148,163,184,0.15) 1px, transparent 0);
+  background-size: 24px 24px;
 }
