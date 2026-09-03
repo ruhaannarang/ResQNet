@@ -1,3 +1,8 @@
+"""
+Legacy MapDataService retained for backward compatibility.
+New code should use app.services.routing.providers directly.
+This wrapper now delegates to the provider factory.
+"""
 import hashlib
 import math
 import httpx

@@ -1,6 +1,43 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Literal
+from enum import Enum
 from .enums import EmergencyCategory, EmergencyPriority, MedicalSubType, VehicleClass
+
+
+class DataSource(str, Enum):
+    PROVIDER = "provider"
+    OPENSTREETMAP = "openstreetmap"
+    ESTIMATED = "estimated"
+    UNAVAILABLE = "unavailable"
+    SIMULATED = "simulated"
+
+
+class MetricValue(BaseModel):
+    """Every data point carries its provenance and confidence."""
+    value: Optional[float] = None
+    source: DataSource = DataSource.ESTIMATED
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    note: Optional[str] = None
+
+
+class WeatherMetric(BaseModel):
+    value: str = "clear"
+    source: DataSource = DataSource.ESTIMATED
+    confidence: float = 0.5
+    note: Optional[str] = None
+
+
+class DataQuality(BaseModel):
+    traffic: DataSource = DataSource.ESTIMATED
+    weather: DataSource = DataSource.ESTIMATED
+    road_geometry: DataSource = DataSource.PROVIDER
+    road_attributes: DataSource = DataSource.ESTIMATED
+    is_simulated: bool = False
+    provider: str = "unknown"
+    traffic_confidence: float = 0.5
+    weather_confidence: float = 0.5
+    geometry_confidence: float = 0.95
+    road_attr_confidence: float = 0.5
 
 
 class GPSPosition(BaseModel):
@@ -47,12 +84,19 @@ class RouteSegment(BaseModel):
     end: RoutePoint
     distance_km: float
     duration_seconds: float
+    # Legacy numeric fields kept for backward compat; frontends should read *_metric for provenance
     traffic_level: float = 0.0
     road_quality: float = 1.0
     weather_condition: str = "clear"
     is_highway: bool = False
     road_width_meters: float = 5.0
     bridge_clearance_meters: float = 5.0
+    # Sourced metrics
+    traffic: Optional[MetricValue] = None
+    road_quality_metric: Optional[MetricValue] = None
+    road_width: Optional[MetricValue] = None
+    bridge_clearance: Optional[MetricValue] = None
+    weather: Optional[WeatherMetric] = None
 
 
 class CandidateRoute(BaseModel):
@@ -62,6 +106,14 @@ class CandidateRoute(BaseModel):
     total_duration_seconds: float
     total_score: float = 0.0
     polyline: Optional[str] = None
+    # Provenance
+    is_simulated: bool = False
+    provider: str = "unknown"
+    data_quality: Optional[DataQuality] = None
+    confidence: float = 0.5
+    feasibility: str = "compatible"  # compatible | risky | impossible
+    feasibility_reasons: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
 
 
 class RouteScore(BaseModel):
@@ -75,6 +127,10 @@ class RouteScore(BaseModel):
     driver_condition_score: float
     constraint_penalties: float
     total_score: float
+    # Extended breakdown
+    eta_score: Optional[float] = None
+    reliability_score: Optional[float] = None
+    comfort_score: Optional[float] = None
 
 
 class RouteExplanation(BaseModel):
@@ -84,6 +140,11 @@ class RouteExplanation(BaseModel):
     reasons: List[str]
     warnings: List[str]
     confidence_score: float
+    # Extended explainability
+    recommendation_reasons: List[str] = Field(default_factory=list)
+    rejected_routes: List[dict] = Field(default_factory=list)
+    tradeoffs: List[str] = Field(default_factory=list)
+    data_quality: Optional[DataQuality] = None
 
 
 class OptimizedRouteResult(BaseModel):
@@ -92,6 +153,13 @@ class OptimizedRouteResult(BaseModel):
     scores: List[RouteScore]
     explanation: RouteExplanation
     alternative_routes_count: int
+    # Overall
+    route_score: Optional[float] = None
+    confidence: Optional[float] = None
+    data_quality: Optional[DataQuality] = None
+    provider: Optional[str] = None
+    is_simulated: bool = False
+    request_id: Optional[str] = None
 
 
 class GPSUpdate(BaseModel):
@@ -107,3 +175,6 @@ class RerouteResponse(BaseModel):
     new_route: Optional[CandidateRoute] = None
     reason: Optional[str] = None
     updated_explanation: Optional[RouteExplanation] = None
+    current_route_health: Optional[dict] = None
+    improvement: Optional[float] = None
+    hysteresis_applied: bool = False

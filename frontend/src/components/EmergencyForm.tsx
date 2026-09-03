@@ -3,6 +3,7 @@ import {
   EmergencyRequest, EmergencyCategory, EmergencyPriority,
   MedicalSubType, VehicleClass, GPSPosition
 } from '../types'
+import { LocationLabels } from '../utils/locationLabels'
 import { Activity, Truck, MapPinned, Users, FileText, Navigation, Crosshair, AlertTriangle, Siren, Flame, ShieldCheck, Biohazard, Clock3, Stethoscope } from 'lucide-react'
 
 interface Props {
@@ -13,6 +14,11 @@ interface Props {
   onUseCurrentLocation?: () => void
   isLocating?: boolean
   isUsingCurrentLocation?: boolean
+  category: EmergencyCategory
+  onCategoryChange: (category: EmergencyCategory) => void
+  vehicleClass: VehicleClass
+  onVehicleClassChange: (vehicle: VehicleClass) => void
+  labels: LocationLabels
 }
 
 const CATEGORY_META: Record<EmergencyCategory, { label: string; icon: any; accent: string }> = {
@@ -37,13 +43,42 @@ export function EmergencyForm({
   onUseCurrentLocation,
   isLocating,
   isUsingCurrentLocation,
+  category,
+  onCategoryChange,
+  vehicleClass,
+  onVehicleClassChange,
+  labels,
 }: Props) {
-  const [category, setCategory] = useState<EmergencyCategory>('medical')
   const [priority, setPriority] = useState<EmergencyPriority>('high')
   const [medicalSubtype, setMedicalSubtype] = useState<MedicalSubType>('cardiac')
-  const [vehicleClass, setVehicleClass] = useState<VehicleClass>('ambulance_als')
   const [description, setDescription] = useState('')
   const [numPatients, setNumPatients] = useState(1)
+
+  const handleCategorySelect = (cat: EmergencyCategory) => {
+    onCategoryChange(cat)
+    if (cat === 'medical' && !vehicleClass.startsWith('ambulance')) {
+      onVehicleClassChange('ambulance_als')
+    } else if (cat === 'fire') {
+      onVehicleClassChange('fire_truck')
+    } else if (cat === 'police') {
+      onVehicleClassChange('police_car')
+    } else if (cat === 'disaster') {
+      onVehicleClassChange('rescue_van')
+    }
+  }
+
+  const handleVehicleSelect = (vc: VehicleClass) => {
+    onVehicleClassChange(vc)
+    if (vc === 'fire_truck') {
+      onCategoryChange('fire')
+    } else if (vc === 'police_car') {
+      onCategoryChange('police')
+    } else if (vc === 'rescue_van') {
+      onCategoryChange('disaster')
+    } else if (vc.startsWith('ambulance')) {
+      onCategoryChange('medical')
+    }
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,7 +129,7 @@ export function EmergencyForm({
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => setCategory(cat)}
+                    onClick={() => handleCategorySelect(cat)}
                     className={`relative flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl border text-xs font-semibold transition-all ${active ? 'bg-slate-900 text-white border-slate-900 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}
                   >
                     <Icon className={`w-4 h-4 ${active ? 'text-white' : 'text-slate-500'}`} />
@@ -167,7 +202,7 @@ export function EmergencyForm({
         <div className="relative">
           <select
             value={vehicleClass}
-            onChange={(e) => setVehicleClass(e.target.value as VehicleClass)}
+            onChange={(e) => handleVehicleSelect(e.target.value as VehicleClass)}
             className="input-field pr-9 font-medium"
           >
             <option value="ambulance_als">Ambulance — ALS (Advanced)</option>
@@ -209,12 +244,18 @@ export function EmergencyForm({
         <div className="space-y-2.5">
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5">
-              <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-widest uppercase text-emerald-700 mb-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Origin</div>
+              <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-wider uppercase text-emerald-800 mb-1 truncate">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                <span className="truncate">{labels.origin}</span>
+              </div>
               <div className="font-mono text-xs font-medium text-slate-900 leading-tight">{origin.latitude.toFixed(5)}, {origin.longitude.toFixed(5)}</div>
               {isUsingCurrentLocation && <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold tracking-wide uppercase bg-emerald-600 text-white px-1.5 py-0.5 rounded-full"><Navigation className="w-3 h-3" /> GPS Live</span>}
             </div>
             <div className="bg-red-50 border border-red-200 rounded-xl p-2.5">
-              <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-widest uppercase text-red-700 mb-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Destination</div>
+              <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-wider uppercase text-red-800 mb-1 truncate">
+                <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+                <span className="truncate">{labels.destination}</span>
+              </div>
               <div className="font-mono text-xs font-medium text-slate-900 leading-tight">{destination.latitude.toFixed(5)}, {destination.longitude.toFixed(5)}</div>
             </div>
           </div>
@@ -227,10 +268,13 @@ export function EmergencyForm({
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 disabled:opacity-50 transition-colors"
             >
               <Crosshair className={`w-4 h-4 ${isLocating ? 'animate-spin' : ''}`} />
-              {isLocating ? 'Acquiring GPS fix…' : 'Use Current Location as Origin'}
+              {isLocating ? 'Acquiring GPS fix…' : `Set ${labels.originShort} to My Location`}
             </button>
           )}
-          <p className="text-[11px] leading-relaxed text-slate-500 flex gap-1.5"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> Click the map to reposition. Green = origin, red = destination. Best route is solid navy.</p>
+          <p className="text-[11px] leading-relaxed text-slate-500 flex gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            Click the map to set points. Green = {labels.origin}, Red = {labels.destination}.
+          </p>
         </div>
       </div>
 

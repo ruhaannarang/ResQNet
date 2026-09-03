@@ -15,15 +15,22 @@ class Settings(BaseSettings):
     HERE_API_KEY: str = ""
     TOMTOM_API_KEY: str = ""
     OSRM_BASE_URL: str = "https://router.project-osrm.org"
+    ROUTING_PROVIDER: str = "auto"  # auto | osrm | google | mock
     ALLOW_SIMULATED_ROUTES: bool = False
 
     WEATHER_API_KEY: str = ""
+    WEATHER_PROVIDER: str = "open-meteo"  # open-meteo | openweathermap
 
-    ORIGIN: tuple = (0, 0)
+    REROUTE_IMPROVEMENT_THRESHOLD: float = 0.15
+    REROUTE_DEGRADATION_THRESHOLD: float = 0.12
+    REROUTE_MIN_INTERVAL_SECONDS: int = 60
+    ROUTING_TIMEOUT_SECONDS: float = 15.0
+
     CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"]
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 
 @lru_cache()

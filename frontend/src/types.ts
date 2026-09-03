@@ -40,6 +40,35 @@ export interface RoutePoint {
   street_name?: string
 }
 
+export type DataSource = 'provider' | 'openstreetmap' | 'estimated' | 'unavailable' | 'simulated'
+
+export interface MetricValue {
+  value: number | null
+  source: DataSource
+  confidence: number
+  note?: string
+}
+
+export interface WeatherMetric {
+  value: string
+  source: DataSource
+  confidence: number
+  note?: string
+}
+
+export interface DataQuality {
+  traffic: DataSource
+  weather: DataSource
+  road_geometry: DataSource
+  road_attributes: DataSource
+  is_simulated: boolean
+  provider: string
+  traffic_confidence: number
+  weather_confidence: number
+  geometry_confidence: number
+  road_attr_confidence: number
+}
+
 export interface RouteSegment {
   start: RoutePoint
   end: RoutePoint
@@ -49,6 +78,13 @@ export interface RouteSegment {
   road_quality: number
   weather_condition: string
   is_highway: boolean
+  road_width_meters?: number
+  bridge_clearance_meters?: number
+  traffic?: MetricValue
+  road_quality_metric?: MetricValue
+  road_width?: MetricValue
+  bridge_clearance?: MetricValue
+  weather?: WeatherMetric
 }
 
 export interface CandidateRoute {
@@ -58,6 +94,13 @@ export interface CandidateRoute {
   total_duration_seconds: number
   total_score: number
   polyline?: string
+  is_simulated?: boolean
+  provider?: string
+  data_quality?: DataQuality
+  confidence?: number
+  feasibility?: 'compatible' | 'risky' | 'impossible'
+  feasibility_reasons?: string[]
+  warnings?: string[]
 }
 
 export interface RouteScore {
@@ -71,6 +114,9 @@ export interface RouteScore {
   driver_condition_score: number
   constraint_penalties: number
   total_score: number
+  eta_score?: number
+  reliability_score?: number
+  comfort_score?: number
 }
 
 export interface RouteExplanation {
@@ -80,6 +126,10 @@ export interface RouteExplanation {
   reasons: string[]
   warnings: string[]
   confidence_score: number
+  recommendation_reasons?: string[]
+  rejected_routes?: Array<{route_id: string; reason: string; feasibility?: string; distance_km?: number; duration_seconds?: number}>
+  tradeoffs?: string[]
+  data_quality?: DataQuality
 }
 
 export interface OptimizedResult {
@@ -88,4 +138,10 @@ export interface OptimizedResult {
   scores: RouteScore[]
   explanation: RouteExplanation
   alternative_routes_count: number
+  route_score?: number
+  confidence?: number
+  data_quality?: DataQuality
+  provider?: string
+  is_simulated?: boolean
+  request_id?: string
 }

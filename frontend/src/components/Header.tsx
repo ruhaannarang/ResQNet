@@ -4,9 +4,10 @@ interface Props {
   activeView: string
   onViewChange: (v: string) => void
   isUsingCurrentLocation?: boolean
+  userCity?: string
 }
 
-export function Header({ activeView: _activeView, onViewChange, isUsingCurrentLocation }: Props) {
+export function Header({ activeView: _activeView, onViewChange, isUsingCurrentLocation, userCity }: Props) {
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200">
       {/* Top bar */}
@@ -78,7 +79,7 @@ export function Header({ activeView: _activeView, onViewChange, isUsingCurrentLo
             <div className="hidden sm:block text-right leading-none">
               <div className="text-sm font-semibold text-slate-900 flex items-center gap-1 justify-end">Command Unit <ChevronDown className="w-3.5 h-3.5 text-slate-400" /></div>
               <div className="text-xs text-slate-500">
-                {isUsingCurrentLocation ? 'Live GPS Dispatch' : 'Sector ND • Demo Dispatch'}
+                {userCity ? `${userCity} • Alpha Dispatch` : isUsingCurrentLocation ? 'Live GPS Dispatch' : 'Local Dispatch Sector'}
               </div>
             </div>
             <div className="w-9 h-9 rounded-xl bg-slate-900 text-white grid place-items-center text-sm font-bold shadow-sm">JD</div>
@@ -95,11 +96,11 @@ export function Header({ activeView: _activeView, onViewChange, isUsingCurrentLo
           <span className="text-slate-300">›</span>
           <span className="inline-flex items-center gap-1.5 font-medium text-slate-900">
             <Activity className="w-3.5 h-3.5 text-slate-400" />
-            {isUsingCurrentLocation ? 'Live GPS Sector' : 'Delhi Demo Sector (Fallback)'}
+            {userCity ? `${userCity} Sector` : isUsingCurrentLocation ? 'Live GPS Sector' : 'Local Sector'}
           </span>
           <span className="hidden md:inline-flex ml-2 items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1 shadow-sm">
             <span className={`w-1.5 h-1.5 rounded-full ${isUsingCurrentLocation ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-            {isUsingCurrentLocation ? 'Live Coordinates Active' : 'Default Demo Coordinates'}
+            {isUsingCurrentLocation ? 'Live Location Active' : 'Calibrated Sector'}
           </span>
         </div>
         <div className="hidden md:flex items-center gap-3 text-slate-500">

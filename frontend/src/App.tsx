@@ -5,8 +5,33 @@ import { EmergencyForm } from './components/EmergencyForm'
 import { RoutePanel } from './components/RoutePanel'
 import { CommandCenter } from './components/CommandCenter'
 import { apiClient } from './services/api'
-import { EmergencyRequest, OptimizedResult, GPSPosition } from './types'
+import { EmergencyRequest, OptimizedResult, GPSPosition, EmergencyCategory, VehicleClass } from './types'
+import { getLocationLabels } from './utils/locationLabels'
 import { Activity, Clock3, Route, ShieldCheck, AlertCircle, X, ChevronRight, Layers, Sparkles, MapPin } from 'lucide-react'
+
+const getInitialLocation = (): { origin: GPSPosition; destination: GPSPosition; userCity: string } => {
+  try {
+    const cached = localStorage.getItem('resqnet_cached_location')
+    if (cached) {
+      const parsed = JSON.parse(cached)
+      if (parsed.origin?.latitude && parsed.destination?.latitude) {
+        return {
+          origin: parsed.origin,
+          destination: parsed.destination,
+          userCity: parsed.userCity || 'Bengaluru',
+        }
+      }
+    }
+  } catch (_) {}
+  // Default regional fallback (Bengaluru)
+  const baseLat = 12.9716
+  const baseLng = 77.5946
+  return {
+    origin: { latitude: baseLat, longitude: baseLng },
+    destination: { latitude: Number((baseLat + 0.015).toFixed(6)), longitude: Number((baseLng + 0.015).toFixed(6)) },
+    userCity: 'Bengaluru',
+  }
+}
 
 function KpiStrip({ hasResult, result }: { hasResult: boolean; result: OptimizedResult | null }) {
   return (
@@ -44,50 +69,76 @@ export default function App() {
   const [activeView, setActiveView] = useState('dispatch')
   const [mobileTab, setMobileTab] = useState<'form' | 'map' | 'command'>('form')
 
-  const [origin, setOrigin] = useState<GPSPosition>({ latitude: 28.6139, longitude: 77.2090 })
-  const [destination, setDestination] = useState<GPSPosition>({ latitude: 28.6304, longitude: 77.2177 })
+  const initialLoc = getInitialLocation()
+  const [origin, setOrigin] = useState<GPSPosition>(initialLoc.origin)
+  const [destination, setDestination] = useState<GPSPosition>(initialLoc.destination)
+  const [userCity, setUserCity] = useState<string>(initialLoc.userCity)
+  const [category, setCategory] = useState<EmergencyCategory>('medical')
+  const [vehicleClass, setVehicleClass] = useState<VehicleClass>('ambulance_als')
+
+  const labels = getLocationLabels(category, vehicleClass)
 
   const requestCurrentLocation = useCallback((isInitial = false) => {
-    if (!('geolocation' in navigator)) {
-      setGeoNotice('Geolocation is not supported by your browser. Using Delhi demo coordinates.')
-      return
-    }
     setIsLocating(true)
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const userLat = position.coords.latitude
-        const userLng = position.coords.longitude
-        setOrigin({ latitude: userLat, longitude: userLng })
-        setIsUsingCurrentLocation(true)
-        setGeoNotice(null)
-        setDestination((prevDest) => {
-          if (!hasManualDestination) {
-            return { latitude: Number((userLat + 0.015).toFixed(6)), longitude: Number((userLng + 0.015).toFixed(6)) }
-          }
-          return prevDest
-        })
-        setIsLocating(false)
-      },
-      (geoError) => {
-        setIsLocating(false)
-        if (geoError.code === 1) {
-          setGeoNotice(
-            'Browser location permission is blocked. ResQNet is using Delhi as a default demo. Click the lock/tune icon in your browser address bar to allow Location, then click "Use Current Location".'
-          )
-        } else if (geoError.code === 2) {
-          setGeoNotice(
-            'GPS location unavailable from device/network. Showing Delhi demo coordinates as fallback.'
-          )
-        } else if (geoError.code === 3) {
-          setGeoNotice(
-            'Location detection timed out. Showing Delhi demo coordinates. Click "Use Current Location" to try again.'
-          )
-        } else {
-          setGeoNotice(`Could not access location: ${geoError.message}`)
+    setGeoNotice(null)
+
+    const applyCoords = (lat: number, lng: number, city?: string) => {
+      const newOrigin = { latitude: lat, longitude: lng }
+      const newDest = { latitude: Number((lat + 0.015).toFixed(6)), longitude: Number((lng + 0.015).toFixed(6)) }
+      setOrigin(newOrigin)
+      setIsUsingCurrentLocation(true)
+      if (city) setUserCity(city)
+      setDestination((prevDest) => {
+        if (!hasManualDestination) {
+          try {
+            localStorage.setItem('resqnet_cached_location', JSON.stringify({ origin: newOrigin, destination: newDest, userCity: city || 'Bengaluru' }))
+          } catch (_) {}
+          return newDest
         }
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
-    )
+        return prevDest
+      })
+      setIsLocating(false)
+    }
+
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          applyCoords(position.coords.latitude, position.coords.longitude)
+        },
+        async (geoError) => {
+          console.warn('Browser GPS unavailable, fetching IP geolocation fallback:', geoError.message)
+          try {
+            const res = await fetch('https://ipwho.is/')
+            const data = await res.json()
+            if (data && data.success && data.latitude && data.longitude) {
+              applyCoords(data.latitude, data.longitude, data.city)
+              return
+            }
+          } catch (_) {}
+
+          setIsLocating(false)
+          if (geoError.code === 1) {
+            setGeoNotice(
+              'Location access blocked in browser. Using detected regional location. Click the lock/tune icon in your address bar to enable GPS.'
+            )
+          } else {
+            setGeoNotice('Using detected regional location. Click "Use Current Location" to re-try GPS fix.')
+          }
+        },
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+      )
+    } else {
+      fetch('https://ipwho.is/')
+        .then((r) => r.json())
+        .then((d) => {
+          if (d && d.success && d.latitude && d.longitude) {
+            applyCoords(d.latitude, d.longitude, d.city)
+          } else {
+            setIsLocating(false)
+          }
+        })
+        .catch(() => setIsLocating(false))
+    }
   }, [hasManualDestination])
 
   useEffect(() => { requestCurrentLocation(true) }, [requestCurrentLocation])
@@ -122,7 +173,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC]">
-      <Header activeView={activeView} onViewChange={handleViewChange} isUsingCurrentLocation={isUsingCurrentLocation} />
+      <Header activeView={activeView} onViewChange={handleViewChange} isUsingCurrentLocation={isUsingCurrentLocation} userCity={userCity} />
 
       {/* KPI strip */}
       <div className="bg-white border-b border-slate-200">
@@ -196,6 +247,11 @@ export default function App() {
               onUseCurrentLocation={() => requestCurrentLocation(false)}
               isLocating={isLocating}
               isUsingCurrentLocation={isUsingCurrentLocation}
+              category={category}
+              onCategoryChange={setCategory}
+              vehicleClass={vehicleClass}
+              onVehicleClassChange={setVehicleClass}
+              labels={labels}
             />
           </div>
 
@@ -227,6 +283,7 @@ export default function App() {
             onMapClick={handleMapClick}
             onUseCurrentLocation={() => requestCurrentLocation(false)}
             isLocating={isLocating}
+            labels={labels}
           />
           {loading && (
             <div className="absolute inset-0 bg-white/70 backdrop-blur-sm grid place-items-center z-[1001]">
@@ -244,7 +301,12 @@ export default function App() {
         {/* Right */}
         <aside className={`${mobileTab==='command' ? 'flex' : 'hidden'} lg:flex w-full lg:w-[360px] xl:w-[380px] shrink-0 flex-col overflow-y-auto lg:max-h-[calc(100vh-220px)]`}>
           <div className="panel-card overflow-hidden min-h-[480px]">
-            <CommandCenter result={result} isUsingCurrentLocation={isUsingCurrentLocation} />
+            <CommandCenter
+              result={result}
+              isUsingCurrentLocation={isUsingCurrentLocation}
+              userCity={userCity}
+              labels={labels}
+            />
           </div>
 
           <div className="mt-4 panel-card p-4 hidden lg:block">
