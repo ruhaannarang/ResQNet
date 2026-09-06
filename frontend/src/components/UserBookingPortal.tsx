@@ -6,6 +6,7 @@ import {
 import { Booking } from '../types'
 import { bookingService } from '../services/bookings'
 import { PlaceSearch } from './PlaceSearch'
+import { normalizeStatus, PHASE_LABEL } from '../utils/bookingRoute'
 
 const CATEGORIES = [
   { id: 'medical', label: 'Medical', icon: Stethoscope },
@@ -15,10 +16,11 @@ const CATEGORIES = [
 ]
 
 function statusStyle(s: string) {
-  const v = (s || '').toLowerCase()
+  const v = normalizeStatus(s)
   if (v === 'pending') return 'bg-amber-50 text-amber-800 border-amber-200'
   if (v === 'accepted') return 'bg-sky-50 text-sky-700 border-sky-200'
-  if (v === 'enroute') return 'bg-blue-50 text-blue-700 border-blue-200'
+  if (v === 'arrived_at_patient') return 'bg-violet-50 text-violet-700 border-violet-200'
+  if (v === 'transporting') return 'bg-blue-50 text-blue-700 border-blue-200'
   if (v === 'completed') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
   return 'bg-slate-50 text-slate-600 border-slate-200'
 }
@@ -49,7 +51,11 @@ const EMPTY_FORM = {
   category: 'medical',
   medical_service_type: 'pickup',
   pickup_address: '',
-  destination: '',
+  pickup_latitude: null as number | null,
+  pickup_longitude: null as number | null,
+  destination_address: '',
+  destination_latitude: null as number | null,
+  destination_longitude: null as number | null,
   priority: 'high',
   num_patients: 1,
   description: '',
@@ -84,15 +90,14 @@ export function UserBookingPortal({ userCity }: { userCity?: string }) {
   // incident spot (= the unit's destination) for fire / police / disaster.
   const targetFieldLabel = isMedical ? 'Patient pickup location *' : 'Incident location *'
 
-  /** Fill the response-target field with the user's live GPS position. */
+  /** Fill pickup with the user's live GPS: readable address + exact coords, stored separately. */
   const useCurrentLocation = () => {
     setLocating(true)
 
     const applyCoords = async (lat: number, lng: number) => {
-      const coords = { lat, lng }
-      setGpsCoords(coords)
-      // Human-readable label via OSM reverse-geocode; always keep raw coords for the driver.
-      let place = ''
+      setGpsCoords({ lat, lng })
+      // Human-readable address only — coordinates go to dedicated numeric fields.
+      let place = `Current location (${lat.toFixed(5)}, ${lng.toFixed(5)})`
       try {
         const ctrl = new AbortController()
         const timer = setTimeout(() => ctrl.abort(), 5000)
@@ -103,17 +108,15 @@ export function UserBookingPortal({ userCity }: { userCity?: string }) {
         clearTimeout(timer)
         const data = await res.json()
         if (data?.display_name) {
-          place = String(data.display_name).split(',').slice(0, 3).join(',').trim() + ' '
+          place = String(data.display_name).split(',').slice(0, 3).join(',').trim()
         }
       } catch (_) {}
-      const label = `${place}(GPS ${lat.toFixed(6)}, ${lng.toFixed(6)})`
-      // Ambulance → pickup; other vehicles → incident spot is their destination.
-      setForm((f) => ({ ...f, pickup_address: label }))
+      setForm((f) => ({ ...f, pickup_address: place, pickup_latitude: lat, pickup_longitude: lng }))
       setLocating(false)
       setToast(
         isMedical
-          ? 'Current location set as ambulance pickup.'
-          : 'Current location set as the destination for the responding unit.'
+          ? 'Current location set as ambulance pickup (GPS locked).'
+          : 'Current location set as the destination for the responding unit (GPS locked).'
       )
       setTimeout(() => setToast(null), 4000)
     }
@@ -151,8 +154,8 @@ export function UserBookingPortal({ userCity }: { userCity?: string }) {
       setTimeout(() => setToast(null), 4000)
       return
     }
-    if (needsHospital && !form.destination.trim()) {
-      setToast('Please enter the destination hospital for a hospital transfer.')
+    if (needsHospital && (form.destination_latitude == null || form.destination_longitude == null)) {
+      setToast('Please pick the hospital from search so the driver gets exact GPS coordinates.')
       setTimeout(() => setToast(null), 4000)
       return
     }
@@ -164,7 +167,11 @@ export function UserBookingPortal({ userCity }: { userCity?: string }) {
         category: form.category,
         medical_service_type: isMedical ? form.medical_service_type : null,
         pickup_address: form.pickup_address.trim(),
-        destination: form.destination.trim(),
+        pickup_latitude: form.pickup_latitude,
+        pickup_longitude: form.pickup_longitude,
+        destination_address: form.destination_address.trim(),
+        destination_latitude: form.destination_latitude,
+        destination_longitude: form.destination_longitude,
         priority: form.priority,
         num_patients: form.num_patients,
         description: form.description.trim(),
@@ -289,7 +296,32 @@ export function UserBookingPortal({ userCity }: { userCity?: string }) {
           <div className="space-y-4">
             <div>
               <label className="label-formal flex items-center gap-1"><MapPin className="w-3 h-3" /> {targetFieldLabel}</label>
-              <input className="input-field" placeholder="Street, landmark, area…" value={form.pickup_address} onChange={(e) => { setForm({ ...form, pickup_address: e.target.value }); setGpsCoords(null) }} maxLength={300} />
+              <input
+                className="input-field"
+                placeholder="Street, landmark, area…"
+                value={form.pickup_address}
+                onChange={(e) => {
+                  // Manual edit clears the stored GPS fix — addresses alone are not routable.
+                  setForm({ ...form, pickup_address: e.target.value, pickup_latitude: null, pickup_longitude: null })
+                  setGpsCoords(null)
+                }}
+                maxLength={300}
+              />
+              <div className="mt-2">
+                <PlaceSearch
+                  label="Search pickup place"
+                  placeholder="Type area or landmark, pick from list…"
+                  onSelect={(pos, name) => {
+                    setForm((f) => ({
+                      ...f,
+                      pickup_address: name.split(',').slice(0, 3).join(',').trim(),
+                      pickup_latitude: pos.latitude,
+                      pickup_longitude: pos.longitude,
+                    }))
+                    setGpsCoords({ lat: pos.latitude, lng: pos.longitude })
+                  }}
+                />
+              </div>
               <button
                 type="button"
                 onClick={useCurrentLocation}
@@ -308,20 +340,37 @@ export function UserBookingPortal({ userCity }: { userCity?: string }) {
             </div>
             <div>
               <PlaceSearch
-                label={needsHospital ? 'Search destination hospital' : 'Search destination (optional)'}
+                label={needsHospital ? 'Search destination hospital *' : 'Search destination (optional)'}
                 placeholder="Type hospital or place, pick from list…"
                 bias={gpsCoords ? { latitude: gpsCoords.lat, longitude: gpsCoords.lng } : undefined}
                 onSelect={(pos, name) =>
                   setForm((f) => ({
                     ...f,
-                    destination: `${name.split(',').slice(0, 2).join(',').trim()} (GPS ${pos.latitude.toFixed(6)}, ${pos.longitude.toFixed(6)})`,
+                    destination_address: name.split(',').slice(0, 2).join(',').trim(),
+                    destination_latitude: pos.latitude,
+                    destination_longitude: pos.longitude,
                   }))
                 }
               />
             </div>
             <div>
               <label className="label-formal flex items-center gap-1"><Cross className="w-3 h-3" /> {needsHospital ? 'Destination hospital *' : isMedical ? 'Preferred hospital (optional)' : 'Destination (optional)'}</label>
-              <input className="input-field" placeholder={needsHospital ? 'e.g. St. John\'s Hospital' : 'e.g. Nearest hospital'} value={form.destination} onChange={(e) => setForm({ ...form, destination: e.target.value })} maxLength={300} />
+              <input
+                className="input-field"
+                placeholder={needsHospital ? 'Pick from search above for exact GPS' : 'e.g. Nearest hospital'}
+                value={form.destination_address}
+                onChange={(e) => {
+                  // Manual edit clears the stored GPS fix.
+                  setForm({ ...form, destination_address: e.target.value, destination_latitude: null, destination_longitude: null })
+                }}
+                maxLength={300}
+              />
+              {form.destination_latitude != null && form.destination_longitude != null && (
+                <span className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  GPS locked: {form.destination_latitude.toFixed(5)}, {form.destination_longitude.toFixed(5)}
+                </span>
+              )}
             </div>
           </div>
 
@@ -379,7 +428,7 @@ export function UserBookingPortal({ userCity }: { userCity?: string }) {
                         {b.category === 'medical' && medicalLabel(b.medical_service_type) ? ` • ${medicalLabel(b.medical_service_type)}` : ''}
                       </div>
                     </div>
-                    <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border capitalize shrink-0 ${statusStyle(b.status)}`}>{b.status}</span>
+                    <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border shrink-0 ${statusStyle(b.status)}`}>{PHASE_LABEL[normalizeStatus(b.status)]}</span>
                   </div>
                   <div className="flex items-center gap-2 mt-1.5 text-[11px] text-slate-400">
                     <span className="font-mono">{b.id}</span>

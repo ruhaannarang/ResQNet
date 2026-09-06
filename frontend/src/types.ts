@@ -179,7 +179,7 @@ export interface CommunityUpdateCreate {
   reporter_name: string
 }
 
-export type BookingStatus = 'pending' | 'accepted' | 'enroute' | 'completed' | 'cancelled'
+export type BookingStatus = 'pending' | 'accepted' | 'arrived_at_patient' | 'transporting' | 'completed' | 'cancelled'
 export type MedicalServiceType = 'pickup' | 'to_hospital'
 
 export interface Booking {
@@ -189,7 +189,11 @@ export interface Booking {
   category: string
   medical_service_type?: string | null
   pickup_address: string
-  destination: string
+  pickup_latitude: number | null
+  pickup_longitude: number | null
+  destination_address: string
+  destination_latitude: number | null
+  destination_longitude: number | null
   priority: string
   num_patients: number
   description: string
@@ -204,7 +208,11 @@ export interface BookingCreate {
   category: string
   medical_service_type?: string | null
   pickup_address: string
-  destination: string
+  pickup_latitude: number | null
+  pickup_longitude: number | null
+  destination_address: string
+  destination_latitude: number | null
+  destination_longitude: number | null
   priority: string
   num_patients: number
   description: string

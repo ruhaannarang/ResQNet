@@ -14,35 +14,57 @@ import { bookingService } from './services/bookings'
 import { EmergencyRequest, OptimizedResult, GPSPosition, EmergencyCategory, EmergencyPriority, VehicleClass, Booking } from './types'
 import { getLocationLabels } from './utils/locationLabels'
 import { Activity, Clock3, Route, ShieldCheck, AlertCircle, X, ChevronRight, Layers, Sparkles, MapPin } from 'lucide-react'
+import { LocationLabels } from './utils/locationLabels'
+import { validateRoutePoints, normalizeStatus, hasDestinationFix, hasPickupFix } from './utils/bookingRoute'
 
-const GPS_RE = /\(GPS\s*(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)/i
-
-/** Extract "(GPS lat, lng)" embedded in a booking address string. */
-function parseGpsFromText(text: string): GPSPosition | null {
-  const m = GPS_RE.exec(text || '')
-  if (!m) return null
-  const latitude = Number(m[1])
-  const longitude = Number(m[2])
-  if (!isFinite(latitude) || !isFinite(longitude)) return null
-  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null
-  return { latitude, longitude }
+/** Fresh high-accuracy driver GPS fix. Rejects — never resolves a guessed point. */
+function getDriverGpsFix(): Promise<GPSPosition> {
+  return new Promise((resolve, reject) => {
+    if (!('geolocation' in navigator)) {
+      reject(new Error('Geolocation is not supported on this device.'))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      (err) => {
+        if (err.code === 1) reject(new Error('Driver location permission denied. Allow GPS or set your location manually in the driver portal.'))
+        else reject(new Error('Driver GPS unavailable (timeout). Set your location manually in the driver portal.'))
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+    )
+  })
 }
 
-/** Resolve a free-text place to coords via OSM (no key). Null on failure. */
-async function geocodePlace(query: string): Promise<GPSPosition | null> {
-  try {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 6000)
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`, { signal: ctrl.signal })
-    clearTimeout(timer)
-    const data = await res.json()
-    if (Array.isArray(data) && data[0]) {
-      const latitude = Number(data[0].lat)
-      const longitude = Number(data[0].lon)
-      if (isFinite(latitude) && isFinite(longitude)) return { latitude, longitude }
-    }
-  } catch (_) {}
-  return null
+/** Map marker labels for the driver→patient leg. */
+function pickupLegLabels(category: string): LocationLabels {
+  const dest =
+    category === 'fire' ? 'Fire Location'
+    : category === 'police' ? 'Incident Location'
+    : category === 'disaster' ? 'Incident Location'
+    : 'Patient Pickup'
+  const destShort =
+    category === 'medical' ? 'Pickup' : 'Incident'
+  return {
+    origin: 'Driver',
+    destination: dest,
+    originShort: 'Driver',
+    destinationShort: destShort,
+    originDescription: 'Driver live GPS at accept time',
+    destinationDescription: 'Patient / incident point from the booking',
+  }
+}
+
+/** Map marker labels for the patient→hospital leg. */
+function transportLegLabels(category: string): LocationLabels {
+  const dest = category === 'medical' ? 'Hospital' : 'Destination'
+  return {
+    origin: 'Patient Pickup',
+    destination: dest,
+    originShort: 'Pickup',
+    destinationShort: category === 'medical' ? 'Hospital' : 'Dest',
+    originDescription: 'Patient pickup point from the booking',
+    destinationDescription: 'Hospital / destination from the booking',
+  }
 }
 
 const getInitialLocation = (): { origin: GPSPosition; destination: GPSPosition; userCity: string } => {
@@ -111,6 +133,13 @@ export default function App() {
   const [userCity, setUserCity] = useState<string>(initialLoc.userCity)
   const [category, setCategory] = useState<EmergencyCategory>('medical')
   const [vehicleClass, setVehicleClass] = useState<VehicleClass>('ambulance_als')
+  // Booking-tracked route state: explicit driver fix, per-leg map labels, tracked booking id.
+  const [driverLocation, setDriverLocation] = useState<GPSPosition | null>(null)
+  const [driverLocationLabel, setDriverLocationLabel] = useState('')
+  const [routeLabels, setRouteLabels] = useState<LocationLabels | null>(null)
+  const [trackedBookingId, setTrackedBookingId] = useState<string | null>(null)
+  // Bumped after every driver phase change so the portal list refreshes instantly.
+  const [bookingSignal, setBookingSignal] = useState(0)
 
   const labels = getLocationLabels(category, vehicleClass)
 
@@ -182,6 +211,9 @@ export default function App() {
   const handleEmergencySubmit = useCallback(async (request: EmergencyRequest) => {
     setLoading(true)
     setError(null)
+    // Manual dispatch owns the map again — drop any booking leg labels.
+    setRouteLabels(null)
+    setTrackedBookingId(null)
     try {
       const response = await apiClient.computeRoute(request)
       setResult(response)
@@ -194,6 +226,9 @@ export default function App() {
   }, [])
 
   const handleMapClick = useCallback((type: 'origin' | 'destination', pos: GPSPosition) => {
+    // Manual pin move takes the map back from any tracked booking.
+    setRouteLabels(null)
+    setTrackedBookingId(null)
     if (type === 'origin') { setOrigin(pos); setIsUsingCurrentLocation(false) }
     else { setDestination(pos); setHasManualDestination(true) }
   }, [])
@@ -204,73 +239,158 @@ export default function App() {
   }
 
   /**
-   * Accept (optionally) + route a booking on the dispatch map.
-   * Leg 1 (heading to patient): current position → patient.
-   * Leg 2 (patient onboard, hospital transfer, enroute): patient → hospital.
-   * Route geometry always comes from the server optimizer.
+   * Booking → map workflow. Coordinates come ONLY from structured booking
+   * fields and the driver's explicit GPS fix. No parsing, no geocoding,
+   * no silent fallbacks — validation failures are structured errors.
    */
-  const handleTrackBooking = async (booking: Booking, acceptFirst = false) => {
-    const statusNow = String(booking.status || '').toLowerCase()
-    if (acceptFirst && statusNow === 'pending') {
-      try { await bookingService.setStatus(booking.id, 'accepted') } catch (_) {}
+  const mapBookingCategory = (booking: Booking) => {
+    const cat = (['medical', 'fire', 'police', 'disaster'].includes(booking.category) ? booking.category : 'medical') as EmergencyCategory
+    const vehicle: VehicleClass = cat === 'fire' ? 'fire_truck' : cat === 'police' ? 'police_car' : cat === 'disaster' ? 'rescue_van' : 'ambulance_als'
+    const pri = (['low', 'medium', 'high', 'critical'].includes((booking.priority || '').toLowerCase()) ? booking.priority.toLowerCase() : 'high') as EmergencyPriority
+    return { cat, vehicle, pri }
+  }
+
+  const buildBookingRequest = (booking: Booking, start: GPSPosition, end: GPSPosition): EmergencyRequest => {
+    const { cat, vehicle, pri } = mapBookingCategory(booking)
+    return {
+      origin: start,
+      destination: end,
+      incident: {
+        category: cat,
+        priority: pri,
+        medical_subtype: cat === 'medical' ? 'general' : undefined,
+        description: `Booking ${booking.id}: ${booking.pickup_address}${booking.destination_address ? ` → ${booking.destination_address}` : ''}. ${booking.description || ''}`.slice(0, 500),
+        num_patients: booking.num_patients || 1,
+        requires_special_equipment: pri === 'critical',
+      },
+      vehicle: {
+        vehicle_class: vehicle,
+        max_width_meters: vehicle === 'fire_truck' ? 3.0 : 2.5,
+        max_height_meters: vehicle === 'fire_truck' ? 3.5 : 2.8,
+        max_weight_tons: vehicle === 'fire_truck' ? 15 : 5,
+        can_handle_steep_grades: true,
+        min_road_width_meters: vehicle === 'fire_truck' ? 4.0 : 3.0,
+        requires_paved_road: vehicle === 'ambulance_als',
+      },
+    }
+  }
+
+  /** Validate, clear stale state, set pins + labels, optionally advance phase, compute server route. */
+  const openBookingLeg = async (
+    booking: Booking,
+    start: { latitude: number | null | undefined; longitude: number | null | undefined },
+    end: { latitude: number | null | undefined; longitude: number | null | undefined },
+    legLabels: LocationLabels,
+    statusToSet?: string,
+  ): Promise<boolean> => {
+    const v = validateRoutePoints(start, end, legLabels.origin, legLabels.destination)
+    if (!v.ok) {
+      setError(`Booking ${booking.id}: ${v.error.message} [${v.error.code}]`)
+      return false
+    }
+    // Clear previous booking route so stale pins/geometry can never linger.
+    setResult(null)
+    setOrigin(v.origin)
+    setDestination(v.destination)
+    setHasManualDestination(true)
+    const { cat, vehicle } = mapBookingCategory(booking)
+    setCategory(cat)
+    setVehicleClass(vehicle)
+    setRouteLabels(legLabels)
+    setTrackedBookingId(booking.id)
+    if (statusToSet) {
+      try { await bookingService.setStatus(booking.id, statusToSet) } catch (_) {}
+      setBookingSignal((n) => n + 1)
     }
     setLoading(true)
     setError(null)
     try {
-      const patient = parseGpsFromText(booking.pickup_address)
-        || (await geocodePlace(booking.pickup_address))
-        || origin
-      let hospital = parseGpsFromText(booking.destination || '')
-      if (!hospital && booking.destination?.trim()) {
-        hospital = await geocodePlace(booking.destination)
-      }
-      const toHospital = booking.category === 'medical' && booking.medical_service_type === 'to_hospital'
-      const effectiveStatus = acceptFirst ? 'accepted' : statusNow
-      const onboard = toHospital && effectiveStatus === 'enroute'
-      const start = onboard ? patient : origin
-      const end = onboard
-        ? (hospital || { latitude: Number((patient.latitude + 0.015).toFixed(6)), longitude: Number((patient.longitude + 0.015).toFixed(6)) })
-        : patient
-
-      setOrigin(start)
-      setDestination(end)
-      setHasManualDestination(true)
-      const cat = (['medical', 'fire', 'police', 'disaster'].includes(booking.category) ? booking.category : 'medical') as EmergencyCategory
-      setCategory(cat)
-      const vehicle: VehicleClass = cat === 'fire' ? 'fire_truck' : cat === 'police' ? 'police_car' : cat === 'disaster' ? 'rescue_van' : 'ambulance_als'
-      setVehicleClass(vehicle)
-      const pri = (['low', 'medium', 'high', 'critical'].includes((booking.priority || '').toLowerCase()) ? booking.priority.toLowerCase() : 'high') as EmergencyPriority
-
-      const request: EmergencyRequest = {
-        origin: start,
-        destination: end,
-        incident: {
-          category: cat,
-          priority: pri,
-          medical_subtype: cat === 'medical' ? 'general' : undefined,
-          description: `Booking ${booking.id}: ${booking.pickup_address}${booking.destination ? ` → ${booking.destination}` : ''}. ${booking.description || ''}`.slice(0, 500),
-          num_patients: booking.num_patients || 1,
-          requires_special_equipment: pri === 'critical',
-        },
-        vehicle: {
-          vehicle_class: vehicle,
-          max_width_meters: vehicle === 'fire_truck' ? 3.0 : 2.5,
-          max_height_meters: vehicle === 'fire_truck' ? 3.5 : 2.8,
-          max_weight_tons: vehicle === 'fire_truck' ? 15 : 5,
-          can_handle_steep_grades: true,
-          min_road_width_meters: vehicle === 'fire_truck' ? 4.0 : 3.0,
-          requires_paved_road: vehicle === 'ambulance_als',
-        },
-      }
-      const response = await apiClient.computeRoute(request)
+      const response = await apiClient.computeRoute(buildBookingRequest(booking, v.origin, v.destination))
       setResult(response)
     } catch (err) {
+      // Pins are correct; only the server path failed — map still shows both markers.
       setError(err instanceof Error ? err.message : 'Failed to compute route')
     } finally {
       setLoading(false)
       setActiveView('dispatch')
       setMobileTab('map')
     }
+    return true
+  }
+
+  /** Resolve the driver's route origin: fresh GPS first, explicit manual point second. Never a guess. */
+  const resolveDriverOrigin = async (): Promise<GPSPosition | null> => {
+    try {
+      const fix = await getDriverGpsFix()
+      setDriverLocation(fix)
+      setDriverLocationLabel(`Driver GPS (${fix.latitude.toFixed(5)}, ${fix.longitude.toFixed(5)})`)
+      return fix
+    } catch (err) {
+      if (driverLocation) return driverLocation // explicitly set by the driver — not a silent fallback
+      setError(err instanceof Error ? err.message : 'Driver location unavailable.')
+      return null
+    }
+  }
+
+  /** ACCEPTED: Driver GPS → Patient/Incident. */
+  const handleAcceptAndTrack = async (booking: Booking) => {
+    if (!hasPickupFix(booking)) {
+      setError(`Booking ${booking.id}: patient/incident GPS is missing. Ask the user to re-book with current location or search — no route was calculated. [MISSING_DESTINATION]`)
+      return
+    }
+    const driver = await resolveDriverOrigin()
+    if (!driver) return // error already shown; driver portal offers manual set
+    await openBookingLeg(
+      booking,
+      driver,
+      { latitude: booking.pickup_latitude, longitude: booking.pickup_longitude },
+      pickupLegLabels(booking.category),
+      'accepted',
+    )
+  }
+
+  /** ARRIVED_AT_PATIENT: first route ends — waiting state, no active transport route. */
+  const handleArrived = async (booking: Booking) => {
+    try { await bookingService.setStatus(booking.id, 'arrived_at_patient') } catch (_) {}
+    setBookingSignal((n) => n + 1)
+    setResult(null)
+  }
+
+  /** TRANSPORTING: Patient → Hospital, calculated automatically on phase change. */
+  const handleStartTransport = async (booking: Booking) => {
+    if (!hasPickupFix(booking) || !hasDestinationFix(booking)) {
+      setError(`Booking ${booking.id}: patient or hospital GPS is missing — transport route was not calculated. [MISSING_DESTINATION]`)
+      return
+    }
+    await openBookingLeg(
+      booking,
+      { latitude: booking.pickup_latitude, longitude: booking.pickup_longitude },
+      { latitude: booking.destination_latitude, longitude: booking.destination_longitude },
+      transportLegLabels(booking.category),
+      'transporting',
+    )
+  }
+
+  /** Re-open the route for the booking's current phase. */
+  const handleViewRoute = async (booking: Booking) => {
+    const phase = normalizeStatus(booking.status)
+    if (phase === 'accepted') {
+      if (!hasPickupFix(booking)) {
+        setError(`Booking ${booking.id}: patient/incident GPS is missing — no route was calculated. [MISSING_DESTINATION]`)
+        return
+      }
+      const driver = await resolveDriverOrigin()
+      if (!driver) return
+      await openBookingLeg(
+        booking,
+        driver,
+        { latitude: booking.pickup_latitude, longitude: booking.pickup_longitude },
+        pickupLegLabels(booking.category),
+      )
+    } else if (phase === 'transporting') {
+      await handleStartTransport(booking)
+    }
+    // arrived_at_patient: intentionally no route (waiting state); completed/cancelled: nothing to show.
   }
 
   return (
@@ -280,6 +400,20 @@ export default function App() {
       {activeView === 'dispatch' && (
         <div className="bg-white border-b border-slate-200">
           <KpiStrip hasResult={!!result} result={result} />
+          {trackedBookingId && routeLabels && (
+            <div className="px-4 lg:px-6 pb-3 flex items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-2.5 py-1.5 rounded-full font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Tracking {trackedBookingId}: {routeLabels.origin} → {routeLabels.destination}
+              </span>
+              <button
+                onClick={() => { setTrackedBookingId(null); setRouteLabels(null) }}
+                className="font-semibold text-slate-500 hover:text-slate-900 px-2 py-1"
+              >
+                Stop tracking
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -326,8 +460,14 @@ export default function App() {
       ) : activeView === 'driver' ? (
         <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
           <DriverPortal
-            onAcceptAndTrack={(b) => handleTrackBooking(b, true)}
-            onViewRoute={(b) => handleTrackBooking(b, false)}
+            driverLocation={driverLocation}
+            driverLocationLabel={driverLocationLabel}
+            onDriverLocationChange={(pos, label) => { setDriverLocation(pos); setDriverLocationLabel(label) }}
+            onAcceptAndTrack={handleAcceptAndTrack}
+            onArrived={handleArrived}
+            onStartTransport={handleStartTransport}
+            onViewRoute={handleViewRoute}
+            refreshSignal={bookingSignal}
           />
         </div>
       ) : (
@@ -409,7 +549,7 @@ export default function App() {
                 onMapClick={handleMapClick}
                 onUseCurrentLocation={() => requestCurrentLocation(false)}
                 isLocating={isLocating}
-                labels={labels}
+                labels={routeLabels ?? labels}
               />
               {loading && (
                 <div className="absolute inset-0 bg-white/70 backdrop-blur-sm grid place-items-center z-[1001]">

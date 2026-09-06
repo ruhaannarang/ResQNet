@@ -1,25 +1,29 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Truck, MapPin, Cross, Phone, User, Users, CheckCircle2,
-  Play, Flag, Ban, RotateCcw, Stethoscope, Home, Siren, Navigation,
+  Flag, Ban, RotateCcw, Stethoscope, Home, Siren, Navigation, Crosshair,
 } from 'lucide-react'
-import { Booking } from '../types'
+import { Booking, GPSPosition } from '../types'
 import { bookingService } from '../services/bookings'
+import { PlaceSearch } from './PlaceSearch'
+import { normalizeStatus, hasDestinationFix, PHASE_LABEL, TripPhase } from '../utils/bookingRoute'
 
-const FILTERS = [
+const FILTERS: Array<{ id: string; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'pending', label: 'Pending' },
   { id: 'accepted', label: 'Accepted' },
-  { id: 'enroute', label: 'En route' },
+  { id: 'arrived_at_patient', label: 'At patient' },
+  { id: 'transporting', label: 'Transporting' },
   { id: 'completed', label: 'Completed' },
   { id: 'cancelled', label: 'Cancelled' },
 ]
 
 function statusStyle(s: string) {
-  const v = (s || '').toLowerCase()
+  const v = normalizeStatus(s)
   if (v === 'pending') return 'bg-amber-50 text-amber-800 border-amber-200'
   if (v === 'accepted') return 'bg-sky-50 text-sky-700 border-sky-200'
-  if (v === 'enroute') return 'bg-blue-50 text-blue-700 border-blue-200'
+  if (v === 'arrived_at_patient') return 'bg-violet-50 text-violet-700 border-violet-200'
+  if (v === 'transporting') return 'bg-blue-50 text-blue-700 border-blue-200'
   if (v === 'completed') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
   return 'bg-slate-50 text-slate-600 border-slate-200'
 }
@@ -28,6 +32,10 @@ function medicalBadge(t?: string | null) {
   if (t === 'to_hospital') return { label: 'Ambulance to hospital', icon: Cross }
   if (t === 'pickup') return { label: 'Ambulance to patient', icon: Home }
   return null
+}
+
+function fmtCoord(v: number | null | undefined) {
+  return v == null ? '—' : v.toFixed(5)
 }
 
 function timeAgo(iso: string) {
@@ -45,17 +53,30 @@ function timeAgo(iso: string) {
 }
 
 export function DriverPortal({
+  driverLocation,
+  driverLocationLabel,
+  onDriverLocationChange,
   onAcceptAndTrack,
+  onArrived,
+  onStartTransport,
   onViewRoute,
+  refreshSignal,
 }: {
+  driverLocation: GPSPosition | null
+  driverLocationLabel: string
+  onDriverLocationChange: (pos: GPSPosition | null, label: string) => void
   onAcceptAndTrack?: (b: Booking) => void
+  onArrived?: (b: Booking) => void
+  onStartTransport?: (b: Booking) => void
   onViewRoute?: (b: Booking) => void
+  refreshSignal?: number
 }) {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [acting, setActing] = useState<string | null>(null)
   const [online, setOnline] = useState<boolean | null>(null)
+  const [locating, setLocating] = useState(false)
 
   const refresh = async (initial = false) => {
     if (initial) setLoading(true)
@@ -74,18 +95,29 @@ export function DriverPortal({
     const onStorage = () => refresh(false)
     window.addEventListener('storage', onStorage)
     return () => { clearInterval(t); window.removeEventListener('storage', onStorage) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Instant refresh after this device advances a trip phase (accept/arrive/transport).
+  useEffect(() => {
+    if (refreshSignal) refresh(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal])
+
   const counts = useMemo(() => {
-    const c: Record<string, number> = { pending: 0, accepted: 0, enroute: 0 }
+    const c: Record<string, number> = { pending: 0, accepted: 0, transporting: 0 }
     bookings.forEach((b) => {
-      const s = (b.status || '').toLowerCase()
-      if (s in c) c[s] += 1
+      const s = normalizeStatus(b.status)
+      if (s === 'pending') c.pending += 1
+      else if (s === 'accepted' || s === 'arrived_at_patient') c.accepted += 1
+      else if (s === 'transporting') c.transporting += 1
     })
     return c
   }, [bookings])
 
-  const filtered = filter === 'all' ? bookings : bookings.filter((b) => b.status === filter)
+  const filtered = filter === 'all'
+    ? bookings
+    : bookings.filter((b) => normalizeStatus(b.status) === filter)
 
   const act = async (id: string, status: string) => {
     setActing(`${id}:${status}`)
@@ -95,8 +127,27 @@ export function DriverPortal({
     setActing(null)
   }
 
+  const useGpsNow = () => {
+    setLocating(true)
+    if (!('geolocation' in navigator)) {
+      setLocating(false)
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        onDriverLocationChange(
+          { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
+          `Driver GPS (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)})`,
+        )
+        setLocating(false)
+      },
+      () => setLocating(false),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 },
+    )
+  }
+
   const renderActions = (b: Booking) => {
-    const s = (b.status || '').toLowerCase()
+    const s: TripPhase = normalizeStatus(b.status)
     const busy = (key: string) => acting === `${b.id}:${key}`
     if (s === 'pending') {
       return (
@@ -113,23 +164,42 @@ export function DriverPortal({
     if (s === 'accepted') {
       return (
         <div className="space-y-2">
+          <button onClick={() => (onArrived ? onArrived(b) : act(b.id, 'arrived_at_patient'))} disabled={!!acting} className="w-full inline-flex items-center justify-center gap-1.5 bg-violet-600 text-white text-xs font-semibold px-3 py-2.5 rounded-xl hover:bg-violet-700 disabled:opacity-50">
+            <MapPin className="w-3.5 h-3.5" /> Arrived at patient
+          </button>
           <div className="flex gap-2">
-            <button onClick={() => act(b.id, 'enroute')} disabled={!!acting} className="flex-1 inline-flex items-center justify-center gap-1.5 bg-blue-600 text-white text-xs font-semibold px-3 py-2.5 rounded-xl hover:bg-blue-700 disabled:opacity-50">
-              {busy('enroute') ? <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Play className="w-3.5 h-3.5" />} Start trip
-            </button>
+            {onViewRoute && (
+              <button onClick={() => onViewRoute(b)} disabled={!!acting} className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50">
+                <Navigation className="w-3.5 h-3.5" /> Route
+              </button>
+            )}
             <button onClick={() => act(b.id, 'cancelled')} disabled={!!acting} className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50">
               <Ban className="w-3.5 h-3.5" /> Cancel
             </button>
           </div>
-          {onViewRoute && (
-            <button onClick={() => onViewRoute(b)} disabled={!!acting} className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50">
-              <Navigation className="w-3.5 h-3.5" /> View route on map
+        </div>
+      )
+    }
+    if (s === 'arrived_at_patient') {
+      const canTransport = hasDestinationFix(b)
+      return (
+        <div className="space-y-2">
+          <div className="text-xs text-violet-800 bg-violet-50 border border-violet-200 rounded-xl px-3 py-2">
+            Waiting — patient boarding. First route ended.
+          </div>
+          {canTransport ? (
+            <button onClick={() => (onStartTransport ? onStartTransport(b) : act(b.id, 'transporting'))} disabled={!!acting} className="w-full inline-flex items-center justify-center gap-1.5 bg-blue-600 text-white text-xs font-semibold px-3 py-2.5 rounded-xl hover:bg-blue-700 disabled:opacity-50">
+              <Navigation className="w-3.5 h-3.5" /> Start transport to hospital
+            </button>
+          ) : (
+            <button onClick={() => act(b.id, 'completed')} disabled={!!acting} className="w-full inline-flex items-center justify-center gap-1.5 bg-emerald-600 text-white text-xs font-semibold px-3 py-2.5 rounded-xl hover:bg-emerald-700 disabled:opacity-50">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Mark completed
             </button>
           )}
         </div>
       )
     }
-    if (s === 'enroute') {
+    if (s === 'transporting') {
       return (
         <div className="space-y-2">
           <button onClick={() => act(b.id, 'completed')} disabled={!!acting} className="w-full inline-flex items-center justify-center gap-1.5 bg-emerald-600 text-white text-xs font-semibold px-3 py-2.5 rounded-xl hover:bg-emerald-700 disabled:opacity-50">
@@ -162,7 +232,7 @@ export function DriverPortal({
             <div className="flex-1">
               <h1 className="text-xl font-extrabold tracking-tight">Driver Portal</h1>
               <p className="text-sm text-white/70 leading-relaxed mt-1">
-                Incoming bookings from the user portal. Accept a trip, start it, mark it done.
+                Accept → drive to patient → start transport → complete. Routes always start from your live GPS.
               </p>
               <div className="mt-3">
                 {online === null ? (
@@ -182,7 +252,7 @@ export function DriverPortal({
             {[
               { label: 'Pending', value: counts.pending, dot: 'bg-amber-400' },
               { label: 'Accepted', value: counts.accepted, dot: 'bg-sky-400' },
-              { label: 'En route', value: counts.enroute, dot: 'bg-blue-400' },
+              { label: 'Transporting', value: counts.transporting, dot: 'bg-blue-400' },
             ].map((k) => (
               <div key={k.label} className="bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${k.dot}`} />
@@ -193,6 +263,50 @@ export function DriverPortal({
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Driver location */}
+      <div className="panel-card p-5">
+        <h3 className="text-sm font-bold tracking-tight text-slate-900 flex items-center gap-2 mb-1">
+          <Crosshair className="w-4 h-4 text-slate-500" /> My location (route start)
+        </h3>
+        <p className="text-xs text-slate-500 mb-3">
+          Accepting a booking uses a fresh GPS fix. Set a manual point as backup — routes never start from a guessed location.
+        </p>
+        {driverLocation ? (
+          <div className="flex items-center gap-2 text-xs bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5 mb-3">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+            <span className="font-semibold text-emerald-800 truncate">{driverLocationLabel || 'Manual point'}</span>
+            <span className="ml-auto font-mono text-emerald-700 shrink-0">
+              {driverLocation.latitude.toFixed(5)}, {driverLocation.longitude.toFixed(5)}
+            </span>
+            <button onClick={() => onDriverLocationChange(null, '')} className="text-emerald-700 hover:text-emerald-900 font-semibold shrink-0">Clear</button>
+          </div>
+        ) : (
+          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mb-3">
+            No driver location set. Accept will request live GPS; set a manual point below as backup.
+          </div>
+        )}
+        <div className="grid sm:grid-cols-2 gap-3 items-start">
+          <button
+            onClick={useGpsNow}
+            disabled={locating}
+            className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 disabled:opacity-50"
+          >
+            <Crosshair className={`w-4 h-4 ${locating ? 'animate-spin' : ''}`} />
+            {locating ? 'Getting GPS…' : 'Use GPS now'}
+          </button>
+          <PlaceSearch
+            label="Or set manually"
+            placeholder="Search your position…"
+            onSelect={(pos, name) =>
+              onDriverLocationChange(
+                pos,
+                name.split(',').slice(0, 2).join(',').trim(),
+              )
+            }
+          />
         </div>
       </div>
 
@@ -242,14 +356,22 @@ export function DriverPortal({
                       <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span className="truncate">{b.pickup_address}</span>
                     </div>
-                    {b.destination && (
-                      <div className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
-                        <Cross className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span className="truncate">→ {b.destination}</span>
+                    <div className="font-mono text-[11px] text-slate-500 mt-0.5">
+                      {fmtCoord(b.pickup_latitude)}, {fmtCoord(b.pickup_longitude)}
+                    </div>
+                    {b.destination_address && (
+                      <div className="text-xs text-slate-500 mt-1">
+                        <div className="flex items-center gap-1.5">
+                          <Cross className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span className="truncate">→ {b.destination_address}</span>
+                        </div>
+                        <div className="font-mono text-[11px] ml-5">
+                          {fmtCoord(b.destination_latitude)}, {fmtCoord(b.destination_longitude)}
+                        </div>
                       </div>
                     )}
                   </div>
-                  <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border capitalize shrink-0 ${statusStyle(b.status)}`}>{b.status}</span>
+                  <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border shrink-0 ${statusStyle(b.status)}`}>{PHASE_LABEL[normalizeStatus(b.status)]}</span>
                 </div>
 
                 <div className="flex flex-wrap gap-1.5">

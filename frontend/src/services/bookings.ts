@@ -2,11 +2,13 @@ import axios from 'axios'
 import { Booking, BookingCreate } from '../types'
 
 const API_BASE = '/api/v1'
-export const BOOKINGS_STORAGE_KEY = 'resqnet_bookings_v1'
+export const BOOKINGS_STORAGE_KEY = 'resqnet_bookings_v2'
 const STORAGE_KEY = BOOKINGS_STORAGE_KEY
 
 // Last-known backend reachability (null = not checked yet)
 let backendLive: boolean | null = null
+
+const now = () => new Date().toISOString()
 
 const SEED: Booking[] = [
   {
@@ -14,30 +16,57 @@ const SEED: Booking[] = [
     requester_name: 'Asha R.',
     phone: '+91 98450 12345',
     category: 'medical',
-    medical_service_type: 'pickup',
-    pickup_address: '14th Cross, HSR Layout Sector 6, Bengaluru',
-    destination: 'Narayana Health City (preferred)',
+    medical_service_type: 'to_hospital',
+    pickup_address: 'MS Ramaiah Institute of Technology, Bengaluru',
+    pickup_latitude: 13.0298,
+    pickup_longitude: 77.5645,
+    destination_address: 'Manipal Hospital, Bengaluru',
+    destination_latitude: 12.9591,
+    destination_longitude: 77.6483,
     priority: 'critical',
     num_patients: 1,
-    description: 'Elderly patient, chest pain. Need ambulance at home gate.',
+    description: 'Elderly patient, chest pain. Need hospital transfer.',
     status: 'pending',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    created_at: now(),
+    updated_at: now(),
   },
   {
     id: 'seed-b2',
     requester_name: 'Kiran M.',
     phone: '+91 99010 67890',
-    category: 'medical',
-    medical_service_type: 'to_hospital',
-    pickup_address: 'Sony World Signal, Koramangala, Bengaluru',
-    destination: "St. John's Medical College Hospital",
+    category: 'fire',
+    medical_service_type: null,
+    pickup_address: 'MG Road, Bengaluru',
+    pickup_latitude: 12.9757,
+    pickup_longitude: 77.6013,
+    destination_address: '',
+    destination_latitude: null,
+    destination_longitude: null,
+    priority: 'critical',
+    num_patients: 1,
+    description: 'Shop fire, ground floor. Fire unit needed at site.',
+    status: 'pending',
+    created_at: now(),
+    updated_at: now(),
+  },
+  {
+    id: 'seed-b3',
+    requester_name: 'Divya N.',
+    phone: '+91 98860 11223',
+    category: 'police',
+    medical_service_type: null,
+    pickup_address: 'Forum Mall, Koramangala, Bengaluru',
+    pickup_latitude: 12.9346,
+    pickup_longitude: 77.6113,
+    destination_address: '',
+    destination_latitude: null,
+    destination_longitude: null,
     priority: 'high',
     num_patients: 1,
-    description: 'Road accident victim, conscious. Need hospital transfer.',
+    description: 'Break-in reported at parking level. Unit requested on site.',
     status: 'accepted',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    created_at: now(),
+    updated_at: now(),
   },
 ]
 
@@ -115,8 +144,8 @@ export const bookingService = {
       ...payload,
       id: `local-bk-${Date.now().toString(36)}`,
       status: 'pending',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: now(),
+      updated_at: now(),
     }
     try {
       const res = await axios.post(`${API_BASE}/bookings`, payload, { timeout: 5000 })
@@ -133,7 +162,7 @@ export const bookingService = {
 
   async setStatus(id: string, status: string): Promise<Booking | null> {
     const bumped = readLocal().map((b) =>
-      b.id === id ? { ...b, status, updated_at: new Date().toISOString() } : b
+      b.id === id ? { ...b, status, updated_at: now() } : b
     )
     writeLocal(bumped)
     try {
