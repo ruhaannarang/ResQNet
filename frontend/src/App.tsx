@@ -5,10 +5,45 @@ import { EmergencyForm } from './components/EmergencyForm'
 import { RoutePanel } from './components/RoutePanel'
 import { CommandCenter } from './components/CommandCenter'
 import { About } from './components/About'
+import { CommunityUpdates } from './components/CommunityUpdates'
+import { CommunityFeed } from './components/CommunityFeed'
+import { UserBookingPortal } from './components/UserBookingPortal'
+import { DriverPortal } from './components/DriverPortal'
 import { apiClient } from './services/api'
-import { EmergencyRequest, OptimizedResult, GPSPosition, EmergencyCategory, VehicleClass } from './types'
+import { bookingService } from './services/bookings'
+import { EmergencyRequest, OptimizedResult, GPSPosition, EmergencyCategory, EmergencyPriority, VehicleClass, Booking } from './types'
 import { getLocationLabels } from './utils/locationLabels'
 import { Activity, Clock3, Route, ShieldCheck, AlertCircle, X, ChevronRight, Layers, Sparkles, MapPin } from 'lucide-react'
+
+const GPS_RE = /\(GPS\s*(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)/i
+
+/** Extract "(GPS lat, lng)" embedded in a booking address string. */
+function parseGpsFromText(text: string): GPSPosition | null {
+  const m = GPS_RE.exec(text || '')
+  if (!m) return null
+  const latitude = Number(m[1])
+  const longitude = Number(m[2])
+  if (!isFinite(latitude) || !isFinite(longitude)) return null
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null
+  return { latitude, longitude }
+}
+
+/** Resolve a free-text place to coords via OSM (no key). Null on failure. */
+async function geocodePlace(query: string): Promise<GPSPosition | null> {
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 6000)
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`, { signal: ctrl.signal })
+    clearTimeout(timer)
+    const data = await res.json()
+    if (Array.isArray(data) && data[0]) {
+      const latitude = Number(data[0].lat)
+      const longitude = Number(data[0].lon)
+      if (isFinite(latitude) && isFinite(longitude)) return { latitude, longitude }
+    }
+  } catch (_) {}
+  return null
+}
 
 const getInitialLocation = (): { origin: GPSPosition; destination: GPSPosition; userCity: string } => {
   try {
@@ -168,6 +203,76 @@ export default function App() {
     setError(null)
   }
 
+  /**
+   * Accept (optionally) + route a booking on the dispatch map.
+   * Leg 1 (heading to patient): current position → patient.
+   * Leg 2 (patient onboard, hospital transfer, enroute): patient → hospital.
+   * Route geometry always comes from the server optimizer.
+   */
+  const handleTrackBooking = async (booking: Booking, acceptFirst = false) => {
+    const statusNow = String(booking.status || '').toLowerCase()
+    if (acceptFirst && statusNow === 'pending') {
+      try { await bookingService.setStatus(booking.id, 'accepted') } catch (_) {}
+    }
+    setLoading(true)
+    setError(null)
+    try {
+      const patient = parseGpsFromText(booking.pickup_address)
+        || (await geocodePlace(booking.pickup_address))
+        || origin
+      let hospital = parseGpsFromText(booking.destination || '')
+      if (!hospital && booking.destination?.trim()) {
+        hospital = await geocodePlace(booking.destination)
+      }
+      const toHospital = booking.category === 'medical' && booking.medical_service_type === 'to_hospital'
+      const effectiveStatus = acceptFirst ? 'accepted' : statusNow
+      const onboard = toHospital && effectiveStatus === 'enroute'
+      const start = onboard ? patient : origin
+      const end = onboard
+        ? (hospital || { latitude: Number((patient.latitude + 0.015).toFixed(6)), longitude: Number((patient.longitude + 0.015).toFixed(6)) })
+        : patient
+
+      setOrigin(start)
+      setDestination(end)
+      setHasManualDestination(true)
+      const cat = (['medical', 'fire', 'police', 'disaster'].includes(booking.category) ? booking.category : 'medical') as EmergencyCategory
+      setCategory(cat)
+      const vehicle: VehicleClass = cat === 'fire' ? 'fire_truck' : cat === 'police' ? 'police_car' : cat === 'disaster' ? 'rescue_van' : 'ambulance_als'
+      setVehicleClass(vehicle)
+      const pri = (['low', 'medium', 'high', 'critical'].includes((booking.priority || '').toLowerCase()) ? booking.priority.toLowerCase() : 'high') as EmergencyPriority
+
+      const request: EmergencyRequest = {
+        origin: start,
+        destination: end,
+        incident: {
+          category: cat,
+          priority: pri,
+          medical_subtype: cat === 'medical' ? 'general' : undefined,
+          description: `Booking ${booking.id}: ${booking.pickup_address}${booking.destination ? ` → ${booking.destination}` : ''}. ${booking.description || ''}`.slice(0, 500),
+          num_patients: booking.num_patients || 1,
+          requires_special_equipment: pri === 'critical',
+        },
+        vehicle: {
+          vehicle_class: vehicle,
+          max_width_meters: vehicle === 'fire_truck' ? 3.0 : 2.5,
+          max_height_meters: vehicle === 'fire_truck' ? 3.5 : 2.8,
+          max_weight_tons: vehicle === 'fire_truck' ? 15 : 5,
+          can_handle_steep_grades: true,
+          min_road_width_meters: vehicle === 'fire_truck' ? 4.0 : 3.0,
+          requires_paved_road: vehicle === 'ambulance_als',
+        },
+      }
+      const response = await apiClient.computeRoute(request)
+      setResult(response)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to compute route')
+    } finally {
+      setLoading(false)
+      setActiveView('dispatch')
+      setMobileTab('map')
+    }
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC]">
       <Header activeView={activeView} onViewChange={handleViewChange} isUsingCurrentLocation={isUsingCurrentLocation} userCity={userCity} />
@@ -209,6 +314,21 @@ export default function App() {
       {activeView === 'about' ? (
         <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
           <About />
+        </div>
+      ) : activeView === 'community' ? (
+        <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+          <CommunityUpdates userCity={userCity} />
+        </div>
+      ) : activeView === 'book' ? (
+        <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+          <UserBookingPortal userCity={userCity} />
+        </div>
+      ) : activeView === 'driver' ? (
+        <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+          <DriverPortal
+            onAcceptAndTrack={(b) => handleTrackBooking(b, true)}
+            onViewRoute={(b) => handleTrackBooking(b, false)}
+          />
         </div>
       ) : (
         <>
@@ -256,6 +376,8 @@ export default function App() {
                   vehicleClass={vehicleClass}
                   onVehicleClassChange={setVehicleClass}
                   labels={labels}
+                  onOriginChange={(pos) => handleMapClick('origin', pos)}
+                  onDestinationChange={(pos) => handleMapClick('destination', pos)}
                 />
               </div>
 
@@ -303,7 +425,7 @@ export default function App() {
             </main>
 
             {/* Right */}
-            <aside className={`${mobileTab==='command' ? 'flex' : 'hidden'} lg:flex w-full lg:w-[360px] xl:w-[380px] shrink-0 flex-col overflow-y-auto lg:max-h-[calc(100vh-220px)]`}>
+            <aside className={`${mobileTab==='command' ? 'flex' : 'hidden'} lg:flex w-full lg:w-[360px] xl:w-[380px] shrink-0 flex-col gap-4 overflow-y-auto lg:max-h-[calc(100vh-220px)]`}>
               <div className="panel-card overflow-hidden min-h-[480px]">
                 <CommandCenter
                   result={result}
@@ -311,6 +433,9 @@ export default function App() {
                   userCity={userCity}
                   labels={labels}
                 />
+              </div>
+              <div className="panel-card overflow-hidden">
+                <CommunityFeed onViewAll={() => handleViewChange('community')} />
               </div>
             </aside>
           </div>

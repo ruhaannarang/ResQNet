@@ -1,4 +1,4 @@
-import { Shield, Activity, Layers } from 'lucide-react'
+import { Shield, Activity, Layers, Megaphone, CalendarPlus, Truck } from 'lucide-react'
 
 interface Props {
   activeView: string
@@ -39,6 +39,24 @@ export function Header({ activeView, onViewChange, isUsingCurrentLocation, userC
               Dispatch
             </button>
             <button
+              onClick={() => onViewChange('book')}
+              className={`px-3 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${activeView === 'book' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+            >
+              <CalendarPlus className="w-4 h-4" /> Book Service
+            </button>
+            <button
+              onClick={() => onViewChange('driver')}
+              className={`px-3 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${activeView === 'driver' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+            >
+              <Truck className="w-4 h-4" /> Driver
+            </button>
+            <button
+              onClick={() => onViewChange('community')}
+              className={`px-3 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${activeView === 'community' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+            >
+              <Megaphone className="w-4 h-4" /> Community Updates
+            </button>
+            <button
               onClick={() => onViewChange('about')}
               className={`px-3 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${activeView === 'about' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
             >
@@ -65,13 +83,13 @@ export function Header({ activeView, onViewChange, isUsingCurrentLocation, userC
         <div className="flex items-center gap-2 text-slate-500">
           <span className="hidden sm:inline font-medium">Operations</span>
           <span className="hidden sm:inline text-slate-300">/</span>
-          <span className="font-medium text-slate-700">{activeView === 'about' ? 'About' : 'Active Dispatch'}</span>
+          <span className="font-medium text-slate-700">{activeView === 'about' ? 'About' : activeView === 'community' ? 'Community Updates' : activeView === 'book' ? 'Book Service' : activeView === 'driver' ? 'Driver Portal' : 'Active Dispatch'}</span>
           <span className="text-slate-300">›</span>
           <span className="inline-flex items-center gap-1.5 font-medium text-slate-900">
             <Activity className="w-3.5 h-3.5 text-slate-400" />
-            {activeView === 'about' ? 'Service Flow & Stack' : userCity ? `${userCity} Sector` : isUsingCurrentLocation ? 'Live GPS Sector' : 'Local Sector'}
+            {activeView === 'about' ? 'Service Flow & Stack' : activeView === 'community' ? 'Local Road Reports' : activeView === 'book' ? 'Request emergency help' : activeView === 'driver' ? 'Incoming bookings' : userCity ? `${userCity} Sector` : isUsingCurrentLocation ? 'Live GPS Sector' : 'Local Sector'}
           </span>
-          {activeView !== 'about' && (
+          {activeView !== 'about' && activeView !== 'community' && activeView !== 'book' && activeView !== 'driver' && (
             <span className="hidden md:inline-flex ml-2 items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1 shadow-sm">
               <span className={`w-1.5 h-1.5 rounded-full ${isUsingCurrentLocation ? 'bg-emerald-500' : 'bg-amber-500'}`} />
               {isUsingCurrentLocation ? 'Live Location Active' : 'Calibrated Sector'}

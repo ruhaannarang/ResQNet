@@ -4,6 +4,7 @@ import {
   MedicalSubType, VehicleClass, GPSPosition
 } from '../types'
 import { LocationLabels } from '../utils/locationLabels'
+import { PlaceSearch } from './PlaceSearch'
 import { Activity, Truck, MapPinned, Users, FileText, Navigation, Crosshair, AlertTriangle, Siren, Flame, ShieldCheck, Biohazard, Clock3, Stethoscope } from 'lucide-react'
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
   vehicleClass: VehicleClass
   onVehicleClassChange: (vehicle: VehicleClass) => void
   labels: LocationLabels
+  onOriginChange?: (pos: GPSPosition) => void
+  onDestinationChange?: (pos: GPSPosition) => void
 }
 
 const CATEGORY_META: Record<EmergencyCategory, { label: string; icon: any; accent: string }> = {
@@ -48,6 +51,8 @@ export function EmergencyForm({
   vehicleClass,
   onVehicleClassChange,
   labels,
+  onOriginChange,
+  onDestinationChange,
 }: Props) {
   const [priority, setPriority] = useState<EmergencyPriority>('high')
   const [medicalSubtype, setMedicalSubtype] = useState<MedicalSubType>('cardiac')
@@ -270,6 +275,26 @@ export function EmergencyForm({
               <Crosshair className={`w-4 h-4 ${isLocating ? 'animate-spin' : ''}`} />
               {isLocating ? 'Acquiring GPS fix…' : `Set ${labels.originShort} to My Location`}
             </button>
+          )}
+          {(onOriginChange || onDestinationChange) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {onOriginChange && (
+                <PlaceSearch
+                  label={`Search ${labels.originShort}`}
+                  placeholder={`Find ${labels.originShort.toLowerCase()}…`}
+                  bias={destination}
+                  onSelect={(pos) => onOriginChange(pos)}
+                />
+              )}
+              {onDestinationChange && (
+                <PlaceSearch
+                  label={`Search ${labels.destinationShort}`}
+                  placeholder="Find hospital, landmark…"
+                  bias={origin}
+                  onSelect={(pos) => onDestinationChange(pos)}
+                />
+              )}
+            </div>
           )}
           <p className="text-[11px] leading-relaxed text-slate-500 flex gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />

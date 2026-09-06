@@ -145,3 +145,67 @@ export interface OptimizedResult {
   is_simulated?: boolean
   request_id?: string
 }
+
+export type CommunityCategory =
+  | 'construction'
+  | 'roadblock'
+  | 'accident'
+  | 'flooding'
+  | 'pothole'
+  | 'traffic'
+  | 'other'
+
+export interface CommunityUpdate {
+  id: string
+  road_name: string
+  category: string
+  title: string
+  description: string
+  severity: 'low' | 'medium' | 'high' | string
+  area: string
+  reporter_name: string
+  upvotes: number
+  created_at: string
+  status?: string
+}
+
+export interface CommunityUpdateCreate {
+  road_name: string
+  category: string
+  title: string
+  description: string
+  severity: string
+  area: string
+  reporter_name: string
+}
+
+export type BookingStatus = 'pending' | 'accepted' | 'enroute' | 'completed' | 'cancelled'
+export type MedicalServiceType = 'pickup' | 'to_hospital'
+
+export interface Booking {
+  id: string
+  requester_name: string
+  phone: string
+  category: string
+  medical_service_type?: string | null
+  pickup_address: string
+  destination: string
+  priority: string
+  num_patients: number
+  description: string
+  status: BookingStatus | string
+  created_at: string
+  updated_at: string
+}
+
+export interface BookingCreate {
+  requester_name: string
+  phone: string
+  category: string
+  medical_service_type?: string | null
+  pickup_address: string
+  destination: string
+  priority: string
+  num_patients: number
+  description: string
+}
