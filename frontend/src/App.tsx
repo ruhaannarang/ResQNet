@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Header } from './components/Header'
+import { Landing } from './components/Landing'
 import { MapContainer } from './components/MapContainer'
 import { EmergencyForm } from './components/EmergencyForm'
 import { RoutePanel } from './components/RoutePanel'
@@ -124,7 +125,7 @@ export default function App() {
   const [isLocating, setIsLocating] = useState(false)
   const [isUsingCurrentLocation, setIsUsingCurrentLocation] = useState(false)
   const [hasManualDestination, setHasManualDestination] = useState(false)
-  const [activeView, setActiveView] = useState('dispatch')
+  const [activeView, setActiveView] = useState('home')
   const [mobileTab, setMobileTab] = useState<'form' | 'map' | 'command'>('form')
 
   const initialLoc = getInitialLocation()
@@ -445,7 +446,11 @@ export default function App() {
         </div>
       )}
 
-      {activeView === 'about' ? (
+      {activeView === 'home' ? (
+        <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+          <Landing onNavigate={handleViewChange} />
+        </div>
+      ) : activeView === 'about' ? (
         <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
           <About />
         </div>

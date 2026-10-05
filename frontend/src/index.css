@@ -87,3 +87,71 @@ html, body, #root {
   background-image: radial-gradient(circle at 1px 1px, rgba(148,163,184,0.15) 1px, transparent 0);
   background-size: 24px 24px;
 }
+
+/* ============ Landing page motion system ============ */
+.landing-grid {
+  background-image:
+    linear-gradient(rgba(148,163,184,0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148,163,184,0.12) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 20%, black 40%, transparent 100%);
+}
+.landing-orb { filter: blur(110px); opacity: 0.5; }
+.landing-orb-a { background: radial-gradient(circle, rgba(220,38,38,0.55), transparent 65%); animation: landing-drift 14s ease-in-out infinite alternate; }
+.landing-orb-b { background: radial-gradient(circle, rgba(16,185,129,0.4), rgba(37,99,235,0.25) 55%, transparent 70%); animation: landing-drift 18s ease-in-out infinite alternate-reverse; }
+@keyframes landing-drift {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(-50px, 60px) scale(1.12); }
+}
+.landing-shine {
+  background-size: 200% 100%;
+  animation: landing-shine 6s linear infinite;
+}
+@keyframes landing-shine {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* scroll reveal */
+.reveal { opacity: 0; transform: translateY(26px); transition: opacity 0.7s cubic-bezier(0.22,1,0.36,1), transform 0.7s cubic-bezier(0.22,1,0.36,1); will-change: opacity, transform; }
+.reveal-visible { opacity: 1; transform: translateY(0); }
+.reveal-d1 { transition-delay: 0.1s; }
+.reveal-d2 { transition-delay: 0.2s; }
+.reveal-d3 { transition-delay: 0.3s; }
+
+/* hero card float */
+.landing-float { animation: landing-float 7s ease-in-out infinite; }
+.landing-float-d1 { animation: landing-float 6s ease-in-out infinite; animation-delay: 0.8s; }
+.landing-float-d2 { animation: landing-float 7s ease-in-out infinite; animation-delay: 1.6s; }
+.landing-float-d3 { animation: landing-float 8s ease-in-out infinite; animation-delay: 2.4s; }
+@keyframes landing-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+/* animated route draw */
+.landing-dash { stroke-dasharray: 14 10; animation: landing-dash 1.4s linear infinite; }
+@keyframes landing-dash {
+  to { stroke-dashoffset: -48; }
+}
+
+/* progress bars */
+.landing-bar { animation: landing-bar 1.2s cubic-bezier(0.22,1,0.36,1) both; }
+.landing-bar-fill { transform-origin: left; animation: landing-bar-fill 0.9s cubic-bezier(0.22,1,0.36,1) both; }
+@keyframes landing-bar { from { width: 0 !important; } }
+@keyframes landing-bar-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* marquee */
+.landing-marquee > div { animation: landing-marquee 28s linear infinite; }
+.landing-marquee:hover > div { animation-play-state: paused; }
+@keyframes landing-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .landing-float, .landing-float-d1, .landing-float-d2, .landing-float-d3,
+  .landing-dash, .landing-marquee > div, .landing-orb, .landing-shine { animation: none !important; }
+}

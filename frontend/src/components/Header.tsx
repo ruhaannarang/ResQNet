@@ -1,4 +1,4 @@
-import { Shield, Activity, Layers, Megaphone, CalendarPlus, Truck } from 'lucide-react'
+import { Shield, Activity, Layers, Megaphone, CalendarPlus, Truck, Home } from 'lucide-react'
 
 interface Props {
   activeView: string
@@ -31,7 +31,13 @@ export function Header({ activeView, onViewChange, isUsingCurrentLocation, userC
 
           <div className="hidden sm:block h-8 w-px bg-slate-200" />
 
-          <nav className="flex items-center gap-1">
+          <nav className="flex items-center gap-1 overflow-x-auto">
+            <button
+              onClick={() => onViewChange('home')}
+              className={`px-3 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-1.5 shrink-0 ${activeView === 'home' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+            >
+              <Home className="w-4 h-4" /> Home
+            </button>
             <button
               onClick={() => onViewChange('dispatch')}
               className={`px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${activeView === 'dispatch' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
@@ -83,13 +89,13 @@ export function Header({ activeView, onViewChange, isUsingCurrentLocation, userC
         <div className="flex items-center gap-2 text-slate-500">
           <span className="hidden sm:inline font-medium">Operations</span>
           <span className="hidden sm:inline text-slate-300">/</span>
-          <span className="font-medium text-slate-700">{activeView === 'about' ? 'About' : activeView === 'community' ? 'Community Updates' : activeView === 'book' ? 'Book Service' : activeView === 'driver' ? 'Driver Portal' : 'Active Dispatch'}</span>
+          <span className="font-medium text-slate-700">{activeView === 'home' ? 'Home' : activeView === 'about' ? 'About' : activeView === 'community' ? 'Community Updates' : activeView === 'book' ? 'Book Service' : activeView === 'driver' ? 'Driver Portal' : 'Active Dispatch'}</span>
           <span className="text-slate-300">›</span>
           <span className="inline-flex items-center gap-1.5 font-medium text-slate-900">
             <Activity className="w-3.5 h-3.5 text-slate-400" />
-            {activeView === 'about' ? 'Service Flow & Stack' : activeView === 'community' ? 'Local Road Reports' : activeView === 'book' ? 'Request emergency help' : activeView === 'driver' ? 'Incoming bookings' : userCity ? `${userCity} Sector` : isUsingCurrentLocation ? 'Live GPS Sector' : 'Local Sector'}
+            {activeView === 'home' ? 'Emergency routing, explained' : activeView === 'about' ? 'Service Flow & Stack' : activeView === 'community' ? 'Local Road Reports' : activeView === 'book' ? 'Request emergency help' : activeView === 'driver' ? 'Incoming bookings' : userCity ? `${userCity} Sector` : isUsingCurrentLocation ? 'Live GPS Sector' : 'Local Sector'}
           </span>
-          {activeView !== 'about' && activeView !== 'community' && activeView !== 'book' && activeView !== 'driver' && (
+          {activeView === 'dispatch' && (
             <span className="hidden md:inline-flex ml-2 items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1 shadow-sm">
               <span className={`w-1.5 h-1.5 rounded-full ${isUsingCurrentLocation ? 'bg-emerald-500' : 'bg-amber-500'}`} />
               {isUsingCurrentLocation ? 'Live Location Active' : 'Calibrated Sector'}
